@@ -116,6 +116,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     layout.add(floatParam("genDensity", "Density", Range { 0.0f, 1.0f }, 0.5f));
     layout.add(floatParam("genComplexity", "Complexity", Range { 0.0f, 1.0f }, 0.5f));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID { "genRoot", 1 }, "808 Root Note", 24, 47, 33));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "genKit", 1 }, "Load Style Kit", true));
     for (int i = 0; i < kNumStripParts; ++i)
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "lock" + juce::String(i), 1 },
                                                               "Lock " + juce::String(kStripNames[i]), false));
@@ -389,14 +390,95 @@ void ZeroDrumProcessor::publishPattern(const zd::Pattern& pattern)
         std::this_thread::yield();
 }
 
+void ZeroDrumProcessor::setParam(const char* id, float plainValue)
+{
+    if (auto* param = apvts_.getParameter(id))
+        param->setValueNotifyingHost(param->convertTo0to1(plainValue));
+}
+
+void ZeroDrumProcessor::loadStyleKit(zd::gen::Style style, int rootNote, std::uint32_t keepMask)
+{
+    // Writes the kit through the parameters, so it shows in the UI, is saved with the
+    // project and can be automated. Locked parts keep their sound as well as their lane.
+    const zd::gen::StyleKit kit = zd::gen::styleKit(style);
+    auto keep = [&](int part) { return ((keepMask >> part) & 1u) != 0; };
+    const auto& lv = kit.levelDb;
+
+    if (!keep(0))
+    {
+        setParam("kickTune", zd::gen::rootTunedKickHz(rootNote, kit.kickInterval, kit.kick.tuneHz));
+        setParam("kickSweep", kit.kick.pitchAmount);
+        setParam("kickSweepTime", kit.kick.pitchDecay * 1000.0f);
+        setParam("kickDecay", kit.kick.decay * 1000.0f);
+        setParam("kickClick", kit.kick.click);
+        setParam("kickDrive", kit.kick.drive);
+        setParam("kickLevel", lv[0]);
+    }
+    if (!keep(1))
+    {
+        setParam("snareTune", kit.snare.tuneHz);
+        setParam("snareToneDecay", kit.snare.toneDecay * 1000.0f);
+        setParam("snareNoiseDecay", kit.snare.noiseDecay * 1000.0f);
+        setParam("snareNoiseTone", kit.snare.noiseTone);
+        setParam("snareSnappy", kit.snare.snappy);
+        setParam("snareDrive", kit.snare.drive);
+        setParam("snareLevel", lv[1]);
+    }
+    if (!keep(2))
+    {
+        setParam("hatPitch", kit.hat.pitchSemitones);
+        setParam("hatDecay", kit.hat.decay * 1000.0f);
+        setParam("hatLevel", lv[2]);
+    }
+    if (!keep(3))
+    {
+        setParam("fmTune", kit.perc.tuneHz);
+        setParam("fmRatio", kit.perc.ratio);
+        setParam("fmIndex", kit.perc.index);
+        setParam("fmIndexDecay", kit.perc.indexDecay * 1000.0f);
+        setParam("fmDecay", kit.perc.decay * 1000.0f);
+        setParam("fmFeedback", kit.perc.feedback);
+        setParam("fmLevel", lv[3]);
+    }
+    if (!keep(4))
+    {
+        setParam("subTune", static_cast<float>(zd::noteToHz(rootNote)));
+        setParam("subDecay", kit.sub.decay * 1000.0f);
+        setParam("subGlide", kit.sub.glide * 1000.0f);
+        setParam("subPunch", kit.sub.punch);
+        setParam("subDrive", kit.sub.drive);
+        setParam("subLevel", lv[4]);
+    }
+    for (int i = 0; i < kNumStripParts; ++i)
+    {
+        if (keep(i))
+            continue;
+        const auto& st = kit.strips[static_cast<std::size_t>(i)];
+        const std::string id = "p" + std::to_string(i);
+        setParam((id + "Attack").c_str(), st.attack);
+        setParam((id + "Sustain").c_str(), st.sustain);
+        setParam((id + "FilterMode").c_str(), static_cast<float>(st.filterMode));
+        setParam((id + "Cutoff").c_str(), st.cutoffHz);
+        setParam((id + "Resonance").c_str(), st.resonance);
+        setParam((id + "StripDrive").c_str(), st.drive);
+    }
+}
+
 void ZeroDrumProcessor::generateBeat()
 {
     zd::gen::GenerateParams p;
     p.style = static_cast<zd::gen::Style>(static_cast<int>(value("genStyle")));
     p.density = value("genDensity");
     p.complexity = value("genComplexity");
-    p.rootNote = static_cast<int>(value("genRoot"));
     p.lockMask = lockMask();
+    if (value("genKit") > 0.5f)
+    {
+        // The style's home key comes with its kit, unless the 808 lane is locked.
+        if ((p.lockMask & (1u << 4)) == 0)
+            setParam("genRoot", static_cast<float>(zd::gen::styleKit(p.style).rootNote));
+        loadStyleKit(p.style, static_cast<int>(value("genRoot")), p.lockMask);
+    }
+    p.rootNote = static_cast<int>(value("genRoot"));
 
     zd::Pattern next;
     {
