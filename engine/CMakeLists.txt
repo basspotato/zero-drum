@@ -10,7 +10,8 @@ add_library(zd_engine STATIC
     src/engines/AnalogSnare.cpp
     src/engines/SamplePlayer.cpp
     src/engines/FmPerc.cpp
-    src/engines/Sub808.cpp)
+    src/engines/Sub808.cpp
+    src/engines/Clap.cpp)
 
 target_include_directories(zd_engine PUBLIC include)
 target_compile_features(zd_engine PUBLIC cxx_std_20)

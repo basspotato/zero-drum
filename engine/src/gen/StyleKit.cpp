@@ -38,7 +38,7 @@ struct Row
 constexpr std::array<Row, static_cast<std::size_t>(Style::kCount)> kRows { {
     // Trap
     { 7, 65.4f, 5.0f, 20.0f, 200.0f, 0.6f, 0.35f, 220.0f, 90.0f, 220.0f, 4500.0f, 0.75f, 0.3f, 2.0f, 60.0f, 1800.0f, 2.76f, 4.0f, 8.0f, 60.0f, 0.1f, 1800.0f, 60.0f, 1.5f, 0.55f, 29, -3.0f, -4.0f, -12.0f, -14.0f, -2.0f,
-      { 0.3f, -0.4f, FilterMode::Off, 0.0f, 0.0f }, { 0.4f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.0f, FilterMode::Off, 0.0f, -3.0f },
+      { 0.3f, -0.4f, FilterMode::Off, 0.0f, 0.0f }, { 0.4f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.0f, FilterMode::Off, 0.0f, -4.5f },
     // Drill
     { 12, 73.4f, 4.0f, 18.0f, 170.0f, 0.55f, 0.3f, 240.0f, 80.0f, 180.0f, 5000.0f, 0.7f, 0.35f, 3.0f, 50.0f, 900.0f, 1.41f, 3.0f, 10.0f, 90.0f, 0.15f, 1400.0f, 120.0f, 1.2f, 0.6f, 26, -3.0f, -4.0f, -12.0f, -14.0f, -2.0f,
       { 0.3f, -0.4f, FilterMode::Off, 0.0f, 0.0f }, { 0.5f, -0.3f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.0f, FilterMode::Off, 0.0f, -5.0f },
@@ -47,46 +47,46 @@ constexpr std::array<Row, static_cast<std::size_t>(Style::kCount)> kRows { {
       { 0.2f, 0.0f, FilterMode::LowPass, 10000.0f, 0.3f }, { 0.3f, 0.1f, FilterMode::LowPass, 10000.0f, 0.3f }, FilterMode::LowPass, 9000.0f, 0.0f, FilterMode::LowPass, 9000.0f, -1.5f },
     // House
     { 0, 55.0f, 3.5f, 30.0f, 450.0f, 0.5f, 0.2f, 230.0f, 60.0f, 260.0f, 1800.0f, 0.85f, 0.2f, 0.0f, 120.0f, 2600.0f, 2.4f, 5.0f, 10.0f, 70.0f, 0.35f, 250.0f, 0.0f, 0.5f, 0.2f, 33, 0.0f, -5.0f, -11.0f, -13.0f, -8.0f,
-      { 0.2f, -0.1f, FilterMode::Off, 0.0f, 0.0f }, { 0.2f, 0.0f, FilterMode::HighPass, 200.0f, 0.0f }, FilterMode::HighPass, 7000.0f, 0.0f, FilterMode::Off, 0.0f, -1.0f },
+      { 0.2f, -0.1f, FilterMode::Off, 0.0f, 0.0f }, { 0.2f, 0.0f, FilterMode::HighPass, 200.0f, 0.0f }, FilterMode::HighPass, 7000.0f, 0.0f, FilterMode::Off, 0.0f, -2.0f },
     // Techno
     { 0, 43.7f, 4.0f, 35.0f, 600.0f, 0.55f, 0.55f, 250.0f, 50.0f, 200.0f, 2200.0f, 0.8f, 0.4f, -1.0f, 70.0f, 3400.0f, 2.9f, 9.0f, 300.0f, 1200.0f, 0.5f, 350.0f, 0.0f, 0.8f, 0.4f, 29, 0.0f, -7.0f, -10.0f, -12.0f, -8.0f,
       { 0.1f, 0.2f, FilterMode::Off, 0.0f, 0.0f }, { 0.0f, 0.2f, FilterMode::HighPass, 250.0f, 0.0f }, FilterMode::HighPass, 5000.0f, 0.0f, FilterMode::Off, 0.0f, -0.5f },
     // UKGarage
     { 0, 49.0f, 3.0f, 25.0f, 300.0f, 0.5f, 0.25f, 330.0f, 60.0f, 120.0f, 5500.0f, 0.45f, 0.3f, 1.0f, 45.0f, 1700.0f, 1.6f, 3.0f, 8.0f, 50.0f, 0.1f, 700.0f, 40.0f, 1.0f, 0.35f, 31, -1.0f, -4.0f, -11.0f, -12.0f, -5.0f,
-      { 0.3f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, { 0.4f, -0.3f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.2f, FilterMode::Off, 0.0f, -1.5f },
+      { 0.3f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, { 0.4f, -0.3f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.2f, FilterMode::Off, 0.0f, -1.0f },
     // DrumAndBass
     { 7, 61.7f, 5.0f, 15.0f, 260.0f, 0.7f, 0.35f, 220.0f, 150.0f, 260.0f, 4500.0f, 0.65f, 0.4f, 2.0f, 45.0f, 3200.0f, 2.9f, 8.0f, 200.0f, 900.0f, 0.5f, 900.0f, 30.0f, 1.0f, 0.4f, 28, -2.0f, 0.0f, -12.0f, -14.0f, -6.0f,
       { 0.5f, -0.3f, FilterMode::Off, 0.0f, 0.0f }, { 0.5f, -0.1f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 7000.0f, 0.0f, FilterMode::Off, 0.0f, -3.5f },
     // Afrobeats
     { 0, 55.0f, 2.0f, 30.0f, 300.0f, 0.3f, 0.15f, 380.0f, 45.0f, 80.0f, 6000.0f, 0.35f, 0.2f, 1.0f, 40.0f, 330.0f, 1.5f, 1.2f, 15.0f, 220.0f, 0.0f, 700.0f, 50.0f, 0.8f, 0.25f, 33, -3.0f, -6.0f, -12.0f, -8.0f, -5.0f,
-      { 0.0f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, { 0.3f, -0.4f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.0f, FilterMode::Off, 0.0f, -0.5f },
+      { 0.0f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, { 0.3f, -0.4f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.0f, FilterMode::Off, 0.0f, 0.0f },
     // Amapiano
     { 7, 65.4f, 1.5f, 30.0f, 280.0f, 0.2f, 0.1f, 260.0f, 70.0f, 160.0f, 3500.0f, 0.6f, 0.2f, 2.0f, 35.0f, 700.0f, 2.0f, 2.5f, 10.0f, 120.0f, 0.1f, 450.0f, 40.0f, 3.0f, 0.5f, 29, -5.0f, -6.0f, -12.0f, -9.0f, -2.0f,
       { -0.2f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, { 0.1f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 7000.0f, 0.0f, FilterMode::Off, 0.0f, 2.0f },
     // JerseyClub
     { 7, 73.4f, 4.0f, 18.0f, 220.0f, 0.65f, 0.3f, 240.0f, 50.0f, 200.0f, 2000.0f, 0.85f, 0.35f, 2.0f, 40.0f, 1400.0f, 0.5f, 6.0f, 60.0f, 180.0f, 0.2f, 900.0f, 40.0f, 1.2f, 0.45f, 31, -1.0f, -3.0f, -12.0f, -10.0f, -5.0f,
-      { 0.4f, -0.3f, FilterMode::Off, 0.0f, 0.0f }, { 0.5f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.0f, FilterMode::Off, 0.0f, -6.0f },
+      { 0.4f, -0.3f, FilterMode::Off, 0.0f, 0.0f }, { 0.5f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.0f, FilterMode::Off, 0.0f, -6.5f },
     // Reggaeton
     { 0, 55.0f, 3.0f, 25.0f, 280.0f, 0.5f, 0.25f, 230.0f, 90.0f, 160.0f, 4000.0f, 0.6f, 0.3f, 0.0f, 50.0f, 520.0f, 1.5f, 2.0f, 20.0f, 200.0f, 0.05f, 800.0f, 30.0f, 1.0f, 0.35f, 33, -1.0f, -3.0f, -12.0f, -11.0f, -5.0f,
       { 0.3f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, { 0.4f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 6000.0f, 0.0f, FilterMode::Off, 0.0f, -2.5f },
     // Pop
     { 0, 55.0f, 3.5f, 25.0f, 350.0f, 0.55f, 0.25f, 210.0f, 140.0f, 300.0f, 4500.0f, 0.6f, 0.2f, 1.0f, 60.0f, 2000.0f, 2.76f, 5.0f, 6.0f, 50.0f, 0.2f, 1000.0f, 30.0f, 1.0f, 0.3f, 33, -1.0f, -3.0f, -12.0f, -13.0f, -5.0f,
-      { 0.3f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, { 0.3f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 7000.0f, 0.0f, FilterMode::Off, 0.0f, 1.5f },
+      { 0.3f, -0.2f, FilterMode::Off, 0.0f, 0.0f }, { 0.3f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 7000.0f, 0.0f, FilterMode::Off, 0.0f, 1.0f },
     // HipHop
     { 0, 49.0f, 2.0f, 45.0f, 650.0f, 0.4f, 0.3f, 190.0f, 140.0f, 280.0f, 3500.0f, 0.65f, 0.35f, 0.0f, 80.0f, 540.0f, 1.48f, 1.5f, 40.0f, 250.0f, 0.0f, 1200.0f, 30.0f, 0.8f, 0.35f, 31, -1.0f, -2.0f, -12.0f, -16.0f, -4.0f,
       { 0.2f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, { 0.4f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 5000.0f, 0.0f, FilterMode::Off, 0.0f, -2.0f },
     // Dubstep
     { 7, 65.4f, 6.0f, 15.0f, 240.0f, 0.85f, 0.5f, 200.0f, 120.0f, 220.0f, 5500.0f, 0.7f, 0.6f, 1.0f, 40.0f, 1200.0f, 3.14f, 8.0f, 20.0f, 120.0f, 0.3f, 900.0f, 40.0f, 1.0f, 0.5f, 29, -1.0f, -1.0f, -13.0f, -14.0f, -5.0f,
-      { 0.5f, -0.4f, FilterMode::HighPass, 40.0f, 0.0f }, { 0.6f, -0.3f, FilterMode::HighPass, 150.0f, 0.0f }, FilterMode::HighPass, 500.0f, 0.0f, FilterMode::HighPass, 500.0f, -6.0f },
+      { 0.5f, -0.4f, FilterMode::HighPass, 40.0f, 0.0f }, { 0.6f, -0.3f, FilterMode::HighPass, 150.0f, 0.0f }, FilterMode::HighPass, 500.0f, 0.0f, FilterMode::HighPass, 500.0f, -9.0f },
     // Trance
     { 0, 55.0f, 4.0f, 25.0f, 380.0f, 0.6f, 0.35f, 220.0f, 70.0f, 280.0f, 2500.0f, 0.8f, 0.25f, 2.0f, 90.0f, 3600.0f, 3.1f, 8.0f, 80.0f, 400.0f, 0.5f, 200.0f, 0.0f, 0.6f, 0.3f, 33, 0.0f, -6.0f, -10.0f, -13.0f, -6.0f,
-      { 0.3f, -0.3f, FilterMode::Off, 0.0f, 0.0f }, { 0.2f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 8000.0f, 0.0f, FilterMode::Off, 0.0f, -2.0f },
+      { 0.3f, -0.3f, FilterMode::Off, 0.0f, 0.0f }, { 0.2f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 8000.0f, 0.0f, FilterMode::Off, 0.0f, -2.5f },
     // Hardstyle
     { 7, 65.4f, 8.0f, 60.0f, 750.0f, 0.9f, 0.95f, 210.0f, 100.0f, 300.0f, 5000.0f, 0.75f, 0.5f, 4.0f, 50.0f, 2500.0f, 3.5f, 7.0f, 15.0f, 80.0f, 0.4f, 300.0f, 0.0f, 0.0f, 0.0f, 29, 0.0f, -5.0f, -14.0f, -15.0f, -48.0f,
       { 0.2f, 0.3f, FilterMode::Off, 0.0f, 0.5f }, { 0.4f, 0.0f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 8000.0f, 0.0f, FilterMode::Off, 0.0f, -2.0f },
     // Festival
     { 7, 65.4f, 6.0f, 30.0f, 500.0f, 0.8f, 0.6f, 200.0f, 110.0f, 350.0f, 4500.0f, 0.8f, 0.45f, 3.0f, 70.0f, 3000.0f, 2.9f, 7.0f, 50.0f, 300.0f, 0.45f, 600.0f, 0.0f, 1.0f, 0.4f, 29, 0.0f, -3.0f, -12.0f, -13.0f, -8.0f,
-      { 0.4f, 0.0f, FilterMode::Off, 0.0f, 0.3f }, { 0.4f, 0.2f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 7000.0f, 0.0f, FilterMode::Off, 0.0f, -3.5f },
+      { 0.4f, 0.0f, FilterMode::Off, 0.0f, 0.3f }, { 0.4f, 0.2f, FilterMode::Off, 0.0f, 0.0f }, FilterMode::HighPass, 7000.0f, 0.0f, FilterMode::Off, 0.0f, -6.5f },
 } };
 
 StripParams strip(const StripRow& r) noexcept
@@ -125,6 +125,39 @@ constexpr std::array<DuckRow, static_cast<std::size_t>(Style::kCount)> kDucks { 
     { 0.80f, 0.3f, 180 }, // Trance
     { 0.00f, 0.3f, 150 }, // Hardstyle (no 808)
     { 0.80f, 0.3f, 180 }, // Festival
+} };
+
+// Snare lane per style, in Style order: main engine, layer, layer level, then the clap
+// (tone Hz, spread ms, hands, tail decay ms, tail, snap, drive). Clap-led styles (house,
+// techno, trance, Jersey club, hardstyle) play the clap engine; trap, drill, dubstep,
+// festival, pop and reggaeton stack a clap on the snare.
+struct ClapRow
+{
+    EngineType main, layer;
+    float layerDb;
+    float tone, spreadMs;
+    int bursts;
+    float decayMs, tail, snap, drive;
+};
+constexpr EngineType S = EngineType::AnalogSnare, C = EngineType::Clap, N = EngineType::Off;
+constexpr std::array<ClapRow, static_cast<std::size_t>(Style::kCount)> kClaps { {
+    { S, C, -4.0f, 1300, 8, 3, 220, 0.5f, 0.6f, 0.3f },  // Trap
+    { S, C, -5.0f, 1600, 6, 3, 160, 0.4f, 0.6f, 0.3f },  // Drill
+    { S, N, 0.0f, 1200, 9, 4, 300, 0.6f, 0.4f, 0.2f },   // Boom bap
+    { C, N, 0.0f, 1100, 9, 4, 350, 0.6f, 0.4f, 0.2f },   // House
+    { C, N, 0.0f, 1400, 7, 3, 250, 0.5f, 0.5f, 0.3f },   // Techno
+    { S, N, 0.0f, 1300, 8, 4, 250, 0.5f, 0.5f, 0.2f },   // UK garage
+    { S, N, 0.0f, 1300, 8, 4, 250, 0.5f, 0.5f, 0.2f },   // Drum and bass
+    { S, N, 0.0f, 1200, 9, 4, 300, 0.6f, 0.4f, 0.2f },   // Afrobeats
+    { S, N, 0.0f, 1200, 9, 4, 300, 0.6f, 0.4f, 0.2f },   // Amapiano
+    { C, N, 0.0f, 1500, 6, 3, 200, 0.4f, 0.6f, 0.3f },   // Jersey club
+    { S, C, -6.0f, 1250, 9, 4, 280, 0.5f, 0.5f, 0.2f },  // Reggaeton
+    { S, C, -6.0f, 1200, 9, 4, 300, 0.6f, 0.5f, 0.2f },  // Pop
+    { S, N, 0.0f, 1200, 9, 4, 300, 0.6f, 0.4f, 0.2f },   // Hip-hop
+    { S, C, -3.0f, 1100, 10, 4, 400, 0.6f, 0.6f, 0.4f }, // Dubstep
+    { C, N, 0.0f, 1200, 10, 4, 450, 0.7f, 0.5f, 0.2f },  // Trance
+    { C, N, 0.0f, 1300, 8, 4, 300, 0.5f, 0.6f, 0.4f },   // Hardstyle
+    { S, C, -2.0f, 1200, 10, 4, 500, 0.7f, 0.5f, 0.3f }, // Festival
 } };
 
 } // namespace
@@ -175,6 +208,17 @@ StyleKit styleKit(Style style) noexcept
     }
     k.levelDb = { r.lk + r.trimDb, r.ls + r.trimDb, r.lh + r.trimDb, r.lp + r.trimDb, r.lb + r.trimDb };
     k.rootNote = r.root;
+    const ClapRow& c = kClaps[static_cast<std::size_t>(index)];
+    k.snareEngine = c.main;
+    k.snareLayer = c.layer;
+    k.snareLayerDb = c.layerDb;
+    k.clap.toneHz = c.tone;
+    k.clap.spread = c.spreadMs * 0.001f;
+    k.clap.bursts = c.bursts;
+    k.clap.decay = c.decayMs * 0.001f;
+    k.clap.tail = c.tail;
+    k.clap.snap = c.snap;
+    k.clap.drive = c.drive;
     const DuckRow& d = kDucks[static_cast<std::size_t>(index)];
     k.subDuck = d.sub;
     k.percDuck = d.perc;
@@ -199,7 +243,13 @@ void applyKit(const StyleKit& kit, Engine& engine, int rootNote, std::uint32_t s
         engine.part(0).kick.tuneHz = rootTunedKickHz(rootNote, kit.kickInterval, kit.kick.tuneHz);
     }
     if (!skip(1))
+    {
         engine.part(1).snare = kit.snare;
+        engine.part(1).clap = kit.clap;
+        engine.part(1).type = kit.snareEngine;
+        engine.part(1).layer = kit.snareLayer;
+        engine.part(1).layerGainDb = kit.snareLayerDb;
+    }
     if (!skip(2))
         engine.part(2).sampleParams = kit.hat;
     if (!skip(3))

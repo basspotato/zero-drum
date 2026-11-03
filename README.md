@@ -70,6 +70,11 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
   **Clipper Drive** for loudness and punch and **Clipper Ceiling** (default -1 dBFS). The plugin
   reports a fixed 64-sample latency (1.3 ms at 48 kHz) whether the clipper is on or off, so the
   host's delay compensation never changes.
+- **Clap engine and layers**: the snare lane plays the analog snare or a clap (several hands a
+  few ms apart, then the room tail: **Clap Tone**, **Spread**, **Hands**, **Tail**, **Snap**). Any
+  part can stack a second engine on every hit: **Snare Layer** puts a clap on the snare (or a
+  snare under the clap). Style kits choose: claps for house, techno, trance, Jersey club and
+  hardstyle; a snare plus clap stack for trap, drill, dubstep, festival, pop and reggaeton.
 - **Sidechain**: every kick ducks the 808 (**808 Sidechain**) and optionally the perc
   (**Perc Sidechain**), with a 3 ms click-free attack and **Sidechain Release**. Style kits set
   it: a short duck for trap-family styles, a full pump for house, trance and festival.
