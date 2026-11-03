@@ -66,6 +66,8 @@ int main(int argc, char** argv)
     engine->prepare(sampleRate, block);
     zd::loadDefaultKit(*engine);
     engine->setMasterGainDb(zd::Engine::kDefaultMasterDb);
+    engine->setMasterStage(true);
+    engine->setMasterClip(true, 3.0f, -1.0f); // the plugin's default master clipper
     engine->sequencer().setSeed(seed);
 
     if (argc > 6)
@@ -103,7 +105,9 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    const auto total = static_cast<std::size_t>(bars * 4 * 60.0 / bpm * sampleRate);
+    // Render the master latency extra and drop it, so the file starts on the downbeat.
+    const auto latency = static_cast<std::size_t>(engine->masterLatency());
+    const auto total = static_cast<std::size_t>(bars * 4 * 60.0 / bpm * sampleRate) + latency;
     std::vector<float> left(total), right(total);
     zd::InternalClock clock(bpm);
     for (std::size_t pos = 0; pos < total; pos += block)
@@ -111,6 +115,8 @@ int main(int argc, char** argv)
         const int n = static_cast<int>(std::min<std::size_t>(block, total - pos));
         engine->process(clock.next(sampleRate, n), nullptr, 0, left.data() + pos, right.data() + pos, n);
     }
+    left.erase(left.begin(), left.begin() + static_cast<long>(latency));
+    right.erase(right.begin(), right.begin() + static_cast<long>(latency));
 
     if (!writeWav(out, left, right, sampleRate))
     {

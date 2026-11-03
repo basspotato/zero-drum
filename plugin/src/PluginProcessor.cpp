@@ -31,6 +31,7 @@ ZeroDrumProcessor::ZeroDrumProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts_(*this, nullptr, "ZeroDrum", createLayout())
 {
+    setLatencySamples(zd::dsp::MasterClipper::kLatency); // the master stage is always in
     zd::loadDefaultPattern(uiPattern_);
     // Cache every parameter pointer once, so the audio thread never builds strings.
     const auto& params = getParameters();
@@ -122,6 +123,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
                                                               "Lock " + juce::String(kStripNames[i]), false));
 
     layout.add(floatParam("masterLevel", "Master Level", Range { -24.0f, 6.0f }, zd::Engine::kDefaultMasterDb, "dB"));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "clipOn", 1 }, "Master Clipper", true));
+    layout.add(floatParam("clipDrive", "Clipper Drive", Range { 0.0f, 24.0f }, 3.0f, "dB"));
+    layout.add(floatParam("clipCeiling", "Clipper Ceiling", Range { -12.0f, 0.0f }, -1.0f, "dB"));
 
     // Groove
     layout.add(floatParam("swing", "Swing", Range { 50.0f, 75.0f }, 54.0f, "%"));
@@ -193,6 +197,7 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
 
     engine.sequencer().pattern().swing = value("swing") * 0.01;
     engine.setMasterGainDb(value("masterLevel"));
+    engine.setMasterClip(value("clipOn") > 0.5f, value("clipDrive"), value("clipCeiling"));
 }
 
 void ZeroDrumProcessor::pullParameters() noexcept
@@ -208,6 +213,10 @@ float ZeroDrumProcessor::stripValue(int part, const char* suffix) const noexcept
 void ZeroDrumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine_.prepare(sampleRate, std::max(samplesPerBlock, 32));
+    // The master stage is always in, so the reported latency never changes; turning the
+    // clipper off swaps in a matching delay.
+    engine_.setMasterStage(true);
+    setLatencySamples(engine_.masterLatency());
     zd::loadDefaultKit(engine_);
     {
         const std::lock_guard<std::mutex> lock(patternMutex_);
@@ -328,6 +337,7 @@ void ZeroDrumProcessor::exportLoopAsync(const juce::File& directory, ExportCallb
     const double sr = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
     engine->prepare(sr, 512);
     zd::loadDefaultKit(*engine);
+    engine->setMasterStage(true); // export through the same clipper as playback
     engine->sequencer().pattern() = patternSnapshot();
     applyParameters(*engine);
 

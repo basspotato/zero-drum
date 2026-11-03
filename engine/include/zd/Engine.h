@@ -8,6 +8,7 @@
 #include "zd/engines/FmPerc.h"
 #include "zd/engines/SamplePlayer.h"
 #include "zd/engines/Sub808.h"
+#include "zd/dsp/Clipper.h"
 
 #include <array>
 #include <atomic>
@@ -92,9 +93,24 @@ public:
     double sampleRate() const noexcept { return sampleRate_; }
 
     /// Master output gain. Realtime safe. Default 0 dB; the plugin and renderer use
-    /// kDefaultMasterDb for headroom until the oversampled master clipper lands.
+    /// kDefaultMasterDb to leave headroom into the master clipper.
     void setMasterGainDb(float db) noexcept;
     static constexpr float kDefaultMasterDb = -2.0f;
+
+    /// The master stage: the oversampled clipper (or, when the clipper is off, a matching
+    /// delay), after the master gain. Off by default, so the engine has no latency; once
+    /// enabled, output is delayed by masterLatency() samples whether or not it clips.
+    /// Call from the thread that calls process() or while it is not running.
+    void setMasterStage(bool enabled) noexcept;
+    void setMasterClip(bool clipOn, float driveDb, float ceilingDb) noexcept;
+    struct MasterClipSettings
+    {
+        bool clipOn = true;
+        float driveDb = 0.0f;
+        float ceilingDb = -1.0f;
+    };
+    const MasterClipSettings& masterClip() const noexcept { return masterClip_; }
+    int masterLatency() const noexcept { return masterStage_ ? dsp::MasterClipper::kLatency : 0; }
 
 private:
     void renderParts(float* left, float* right, int from, int to) noexcept;
@@ -110,6 +126,9 @@ private:
     double sampleRate_ = 48000.0;
     int maxBlockSize_ = 0;
     float masterGain_ = 1.0f;
+    bool masterStage_ = false;
+    dsp::MasterClipper clipper_;
+    MasterClipSettings masterClip_ {};
 };
 
 /// Free-running clock for the standalone app and tests: advances a sample counter and

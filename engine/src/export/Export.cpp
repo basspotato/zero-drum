@@ -92,21 +92,26 @@ long long beatToSample(double beats, double samplesPerBeat) noexcept { return st
 
 /// Renders [startBeats, endBeats). The length is the difference of the rounded ends, so a
 /// hit on endBeats never lands in the last sample and loop files never double a downbeat.
+/// The engine's master latency is compensated: the pass runs that many samples longer and
+/// the first ones (the delay line's contents) are dropped. A warm-up pass that the main
+/// pass continues from must not run longer, or the overlap would trigger hits twice.
 void renderPass(Engine& engine, double bpm, double startBeats, double endBeats, std::vector<float>& left,
-                std::vector<float>& right)
+                std::vector<float>& right, bool compensateLatency = true)
 {
     constexpr int kBlock = 512;
     const double samplesPerBeat = engine.sampleRate() * 60.0 / bpm;
     const long long startSample = beatToSample(startBeats, samplesPerBeat);
     const long long total = beatToSample(endBeats, samplesPerBeat) - startSample;
-    left.assign(static_cast<std::size_t>(total), 0.0f);
-    right.assign(static_cast<std::size_t>(total), 0.0f);
-    for (long long pos = 0; pos < total; pos += kBlock)
+    const long long latency = compensateLatency ? engine.masterLatency() : 0;
+    std::vector<float> l(static_cast<std::size_t>(total + latency)), r(l.size());
+    for (long long pos = 0; pos < total + latency; pos += kBlock)
     {
-        const int n = static_cast<int>(std::min<long long>(kBlock, total - pos));
+        const int n = static_cast<int>(std::min<long long>(kBlock, total + latency - pos));
         const Transport t { true, bpm, static_cast<double>(startSample + pos) / samplesPerBeat };
-        engine.process(t, nullptr, 0, left.data() + pos, right.data() + pos, n);
+        engine.process(t, nullptr, 0, l.data() + pos, r.data() + pos, n);
     }
+    left.assign(l.begin() + latency, l.end());
+    right.assign(r.begin() + latency, r.end());
 }
 
 } // namespace
@@ -304,13 +309,15 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
     {
         Engine& engine;
         std::array<bool, kMaxParts> saved {};
-        explicit MuteGuard(Engine& e) : engine(e)
+        Engine::MasterClipSettings clipSettings;
+        explicit MuteGuard(Engine& e) : engine(e), clipSettings(e.masterClip())
         {
             for (int i = 0; i < kMaxParts; ++i)
                 saved[static_cast<std::size_t>(i)] = engine.part(i).mix.mute;
         }
         ~MuteGuard()
         {
+            engine.setMasterClip(clipSettings.clipOn, clipSettings.driveDb, clipSettings.ceilingDb);
             for (int i = 0; i < kMaxParts; ++i)
                 engine.part(i).mix.mute = saved[static_cast<std::size_t>(i)];
             engine.reset();
@@ -320,14 +327,19 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
     } guard(engine);
     const auto& savedMute = guard.saved;
 
+    // Part files are taken before the master clipper (its delay stays, so timing matches);
+    // the mix goes through it. So the parts sum exactly to an unclipped mix, the way stems
+    // from a mix bus do.
+    const Engine::MasterClipSettings clip = engine.masterClip();
     auto render = [&](int solo, std::vector<float>& l, std::vector<float>& r) {
+        engine.setMasterClip(solo < 0 && clip.clipOn, clip.driveDb, clip.ceilingDb);
         for (int i = 0; i < kMaxParts; ++i)
             engine.part(i).mix.mute = solo >= 0 ? (i != solo) : savedMute[static_cast<std::size_t>(i)];
         engine.reset();
         if (options.seamlessLoop)
         {
             std::vector<float> warmL, warmR;
-            renderPass(engine, options.bpm, 0.0, startBeats, warmL, warmR);
+            renderPass(engine, options.bpm, 0.0, startBeats, warmL, warmR, false); // warm-up: no drop, no overlap
         }
         renderPass(engine, options.bpm, startBeats, startBeats + loopBeats, l, r);
     };

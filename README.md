@@ -66,10 +66,15 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
   the pattern as a MIDI clip. Drums use channel 10 with the notes above (36 kick, 38 snare,
   42 hat, 39 perc); the 808 uses channel 2 with its notes, so the clip plays back the same on
   Zero Drum or drives any other drum rack or synth.
+- **Master clipper** (on by default): a 4x oversampled soft-knee clipper on the output, with
+  **Clipper Drive** for loudness and punch and **Clipper Ceiling** (default -1 dBFS). The plugin
+  reports a fixed 64-sample latency (1.3 ms at 48 kHz) whether the clipper is on or off, so the
+  host's delay compensation never changes.
 - **Export...**: pick a folder and get a timestamped folder with `mix.wav`, `parts/` (one WAV per
   part), `midi/` (one MIDI file per part plus `all-parts.mid`) and `pattern.zdpattern`.
-  The part WAVs are rendered one at a time and sum exactly to the mix, so there is never any
-  stem separation. Files loop seamlessly: decays from the end of the loop carry into its start.
+  The part WAVs are rendered one at a time, before the master clipper, so they sum exactly to
+  the unclipped mix (like stems from a mix bus) and there is never any stem separation.
+  `mix.wav` goes through the clipper. Files loop seamlessly: decays from the end of the loop carry into its start.
   Tempo is the host's (or the Free Run tempo).
 
 ## Engineering rules

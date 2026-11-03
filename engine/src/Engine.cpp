@@ -157,6 +157,7 @@ void Engine::reset() noexcept
 {
     for (auto& p : parts_)
         p.reset();
+    clipper_.reset();
 }
 
 void Engine::setSample(int partIndex, SampleDataPtr sample)
@@ -259,6 +260,23 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
             left[n] *= masterGain_;
             right[n] *= masterGain_;
         }
+    if (masterStage_)
+        clipper_.process(left, right, numSamples);
+}
+
+void Engine::setMasterStage(bool enabled) noexcept
+{
+    if (enabled != masterStage_)
+        clipper_.reset();
+    masterStage_ = enabled;
+}
+
+void Engine::setMasterClip(bool clipOn, float driveDb, float ceilingDb) noexcept
+{
+    masterClip_ = { clipOn, driveDb, ceilingDb };
+    clipper_.setEnabled(clipOn);
+    clipper_.setDriveDb(driveDb);
+    clipper_.setCeilingDb(ceilingDb);
 }
 
 void Engine::setMasterGainDb(float db) noexcept
