@@ -1,7 +1,9 @@
 // zd_render: renders the default kit and pattern to a WAV file, offline and without JUCE.
-// Usage: zd_render [out.wav] [bars=4] [bpm=120] [sampleRate=48000] [seed=1]
+// Usage: zd_render [out.wav] [bars=4] [bpm=120] [sampleRate=48000] [seed=1] [style]
+// With a style (0..11, see zd::gen::Style) the beat is generated; bpm 0 picks the style's tempo.
 
 #include "zd/Engine.h"
+#include "zd/gen/Generator.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -50,7 +52,7 @@ int main(int argc, char** argv)
 {
     const std::string out = argc > 1 ? argv[1] : "zero-drum-demo.wav";
     const int bars = argc > 2 ? std::atoi(argv[2]) : 4;
-    const double bpm = argc > 3 ? std::atof(argv[3]) : 120.0;
+    double bpm = argc > 3 ? std::atof(argv[3]) : 120.0;
     const int sampleRate = argc > 4 ? std::atoi(argv[4]) : 48000;
     const auto seed = static_cast<std::uint64_t>(argc > 5 ? std::atoll(argv[5]) : 1);
 
@@ -58,7 +60,23 @@ int main(int argc, char** argv)
     auto engine = std::make_unique<zd::Engine>();
     engine->prepare(sampleRate, block);
     zd::loadDefaultKit(*engine);
+    engine->setMasterGainDb(zd::Engine::kDefaultMasterDb);
     engine->sequencer().setSeed(seed);
+
+    if (argc > 6)
+    {
+        zd::gen::GenerateParams p;
+        p.style = static_cast<zd::gen::Style>(std::atoi(argv[6]));
+        p.seed = seed;
+        p.complexity = 0.6f;
+        zd::gen::generate(p, engine->sequencer().pattern());
+        if (bpm <= 0.0)
+        {
+            const auto range = zd::gen::styleTempo(p.style);
+            bpm = 0.5 * (range.low + range.high);
+        }
+        std::printf("style %s\n", std::string(zd::gen::styleName(p.style)).c_str());
+    }
 
     const auto total = static_cast<std::size_t>(bars * 4 * 60.0 / bpm * sampleRate);
     std::vector<float> left(total), right(total);

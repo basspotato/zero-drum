@@ -2,6 +2,11 @@
 
 #include "PluginEditor.h"
 
+#include "zd/PatternIO.h"
+
+#include <string>
+#include <thread>
+
 namespace {
 
 using Range = juce::NormalisableRange<float>;
@@ -26,6 +31,7 @@ ZeroDrumProcessor::ZeroDrumProcessor()
     : AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts_(*this, nullptr, "ZeroDrum", createLayout())
 {
+    zd::loadDefaultPattern(uiPattern_);
     // Cache every parameter pointer once, so the audio thread never builds strings.
     const auto& params = getParameters();
     paramIds_.reserve(static_cast<std::size_t>(params.size()));
@@ -100,6 +106,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
         layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "StripDrive", 1 }, n + " Strip Drive", Range { 0.0f, 1.0f }, 0.0f));
     }
 
+    // Beat generator
+    {
+        juce::StringArray styles;
+        for (int i = 0; i < static_cast<int>(zd::gen::Style::kCount); ++i)
+            styles.add(juce::String(std::string(zd::gen::styleName(static_cast<zd::gen::Style>(i)))));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "genStyle", 1 }, "Style", styles, 0));
+    }
+    layout.add(floatParam("genDensity", "Density", Range { 0.0f, 1.0f }, 0.5f));
+    layout.add(floatParam("genComplexity", "Complexity", Range { 0.0f, 1.0f }, 0.5f));
+    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID { "genRoot", 1 }, "808 Root Note", 24, 47, 33));
+    for (int i = 0; i < kNumStripParts; ++i)
+        layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "lock" + juce::String(i), 1 },
+                                                              "Lock " + juce::String(kStripNames[i]), false));
+
+    layout.add(floatParam("masterLevel", "Master Level", Range { -24.0f, 6.0f }, zd::Engine::kDefaultMasterDb, "dB"));
+
     // Groove
     layout.add(floatParam("swing", "Swing", Range { 50.0f, 75.0f }, 54.0f, "%"));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "freeRun", 1 }, "Free Run", false));
@@ -169,6 +191,7 @@ void ZeroDrumProcessor::pullParameters() noexcept
     }
 
     engine_.sequencer().pattern().swing = value("swing") * 0.01;
+    engine_.setMasterGainDb(value("masterLevel"));
 }
 
 float ZeroDrumProcessor::stripValue(int part, const char* suffix) const noexcept
@@ -180,6 +203,10 @@ void ZeroDrumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine_.prepare(sampleRate, std::max(samplesPerBlock, 32));
     zd::loadDefaultKit(engine_);
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        engine_.submitPattern(uiPattern_);
+    }
     freeRunClock_ = zd::InternalClock { value("freeRunBpm") };
 }
 
@@ -251,17 +278,114 @@ juce::AudioProcessorEditor* ZeroDrumProcessor::createEditor()
     return new ZeroDrumEditor(*this);
 }
 
+// ------------------------------------------------------------------------- beat generator
+
+std::uint32_t ZeroDrumProcessor::lockMask() const noexcept
+{
+    std::uint32_t mask = 0;
+    for (int i = 0; i < kNumStripParts; ++i)
+        if (value(("lock" + std::to_string(i)).c_str()) > 0.5f)
+            mask |= 1u << i;
+    return mask;
+}
+
+void ZeroDrumProcessor::publishPattern(const zd::Pattern& pattern)
+{
+    // The audio thread may be mid-copy for a moment; the retry is bounded and cheap.
+    for (int attempt = 0; attempt < 1000 && !engine_.submitPattern(pattern); ++attempt)
+        std::this_thread::yield();
+}
+
+void ZeroDrumProcessor::generateBeat()
+{
+    zd::gen::GenerateParams p;
+    p.style = static_cast<zd::gen::Style>(static_cast<int>(value("genStyle")));
+    p.density = value("genDensity");
+    p.complexity = value("genComplexity");
+    p.rootNote = static_cast<int>(value("genRoot"));
+    p.lockMask = lockMask();
+
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        seed_ = static_cast<std::uint64_t>(juce::Random::getSystemRandom().nextInt64()) & 0x7fffffffffffull;
+        p.seed = seed_;
+        zd::gen::generate(p, uiPattern_);
+        next = uiPattern_;
+    }
+    // The style's swing becomes the swing parameter, so it is visible and automatable.
+    if (auto* swing = apvts_.getParameter("swing"))
+        swing->setValueNotifyingHost(swing->convertTo0to1(static_cast<float>(next.swing * 100.0)));
+    publishPattern(next);
+}
+
+void ZeroDrumProcessor::mutateBeat()
+{
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        seed_ = zd::dsp::hash64(seed_ + 1) & 0x7fffffffffffull;
+        zd::gen::mutate(uiPattern_, 0.6f, seed_, lockMask());
+        next = uiPattern_;
+    }
+    publishPattern(next);
+}
+
+void ZeroDrumProcessor::addFillToBeat()
+{
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        zd::gen::addFill(uiPattern_, value("genComplexity"), seed_ + 7, lockMask());
+        next = uiPattern_;
+    }
+    publishPattern(next);
+}
+
+juce::String ZeroDrumProcessor::describeBeat() const
+{
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    juce::String text;
+    for (int i = 0; i < kNumStripParts; ++i)
+        text << kStripNames[i] << " " << zd::gen::countHits(uiPattern_.lanes[static_cast<std::size_t>(i)]) << "   ";
+    return text + "seed " + juce::String(static_cast<juce::int64>(seed_));
+}
+
+// --------------------------------------------------------------------------------- state
+
 void ZeroDrumProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts_.copyState().createXml())
+    auto state = apvts_.copyState();
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        state.setProperty("pattern", juce::String(zd::serializePattern(uiPattern_)), nullptr);
+        state.setProperty("seed", juce::String(static_cast<juce::int64>(seed_)), nullptr);
+    }
+    if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
 }
 
 void ZeroDrumProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    if (auto xml = getXmlFromBinary(data, sizeInBytes))
-        if (xml->hasTagName(apvts_.state.getType()))
-            apvts_.replaceState(juce::ValueTree::fromXml(*xml));
+    auto xml = getXmlFromBinary(data, sizeInBytes);
+    if (xml == nullptr || !xml->hasTagName(apvts_.state.getType()))
+        return;
+
+    auto tree = juce::ValueTree::fromXml(*xml);
+    zd::Pattern loaded;
+    const bool hasPattern = zd::deserializePattern(tree.getProperty("pattern").toString().toStdString(), loaded);
+    const auto seed = static_cast<std::uint64_t>(tree.getProperty("seed", 1).toString().getLargeIntValue());
+    apvts_.replaceState(tree);
+
+    if (hasPattern)
+    {
+        {
+            const std::lock_guard<std::mutex> lock(patternMutex_);
+            uiPattern_ = loaded;
+            seed_ = seed;
+        }
+        publishPattern(loaded);
+    }
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

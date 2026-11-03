@@ -10,6 +10,7 @@
 #include "zd/engines/Sub808.h"
 
 #include <array>
+#include <atomic>
 #include <vector>
 
 namespace zd {
@@ -81,16 +82,33 @@ public:
 
     void setSample(int partIndex, SampleDataPtr sample);
 
+    /// Hands a new pattern to the audio thread from another thread (UI, generator).
+    /// Lock-free and allocation-free on both sides; the audio thread picks it up at the
+    /// start of its next block. Returns false if the audio thread is copying the previous
+    /// one right now; call again.
+    bool submitPattern(const Pattern& pattern) noexcept;
+
     double sampleRate() const noexcept { return sampleRate_; }
+
+    /// Master output gain. Realtime safe. Default 0 dB; the plugin and renderer use
+    /// kDefaultMasterDb for headroom until the oversampled master clipper lands.
+    void setMasterGainDb(float db) noexcept;
+    static constexpr float kDefaultMasterDb = -2.0f;
 
 private:
     void renderParts(float* left, float* right, int from, int to) noexcept;
+    void applyPendingPattern() noexcept;
+
+    enum PendingState : int { Empty = 0, Writing = 1, Ready = 2, Reading = 3 };
+    Pattern pendingPattern_ {};
+    std::atomic<int> pendingState_ { Empty };
 
     std::array<Part, kMaxParts> parts_;
     Sequencer sequencer_;
     std::array<NoteEvent, kMaxEventsPerBlock> events_ {};
     double sampleRate_ = 48000.0;
     int maxBlockSize_ = 0;
+    float masterGain_ = 1.0f;
 };
 
 /// Free-running clock for the standalone app and tests: advances a sample counter and

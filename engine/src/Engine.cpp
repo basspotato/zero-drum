@@ -163,6 +163,29 @@ void Engine::setSample(int partIndex, SampleDataPtr sample)
     p.sample = std::move(sample);
 }
 
+bool Engine::submitPattern(const Pattern& pattern) noexcept
+{
+    int expected = Empty;
+    if (!pendingState_.compare_exchange_strong(expected, Writing, std::memory_order_acquire))
+    {
+        expected = Ready; // replace a pattern the audio thread has not taken yet
+        if (!pendingState_.compare_exchange_strong(expected, Writing, std::memory_order_acquire))
+            return false;
+    }
+    pendingPattern_ = pattern;
+    pendingState_.store(Ready, std::memory_order_release);
+    return true;
+}
+
+void Engine::applyPendingPattern() noexcept
+{
+    int expected = Ready;
+    if (!pendingState_.compare_exchange_strong(expected, Reading, std::memory_order_acquire))
+        return;
+    sequencer_.pattern() = pendingPattern_;
+    pendingState_.store(Empty, std::memory_order_release);
+}
+
 void Engine::renderParts(float* left, float* right, int from, int to) noexcept
 {
     if (to <= from)
@@ -176,6 +199,7 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
 {
     std::fill(left, left + numSamples, 0.0f);
     std::fill(right, right + numSamples, 0.0f);
+    applyPendingPattern();
 
     // Blocks larger than prepare() promised are rendered in chunks so scratch buffers suffice.
     if (numSamples > maxBlockSize_ && maxBlockSize_ > 0)
@@ -225,6 +249,18 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
         parts_[static_cast<std::size_t>(e.part)].trigger(e.velocity, e.note);
     }
     renderParts(left, right, position, numSamples);
+
+    if (masterGain_ != 1.0f)
+        for (int n = 0; n < numSamples; ++n)
+        {
+            left[n] *= masterGain_;
+            right[n] *= masterGain_;
+        }
+}
+
+void Engine::setMasterGainDb(float db) noexcept
+{
+    masterGain_ = dsp::dbToGain(std::clamp(db, -60.0f, 12.0f));
 }
 
 void loadDefaultKit(Engine& engine)
