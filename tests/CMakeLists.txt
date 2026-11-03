@@ -5,7 +5,8 @@ add_executable(zd_tests
     test_sequencer.cpp
     test_engine.cpp
     test_phase1.cpp
-    test_generator.cpp)
+    test_generator.cpp
+    test_export.cpp)
 
 find_package(Threads REQUIRED)
 target_link_libraries(zd_tests PRIVATE zd_engine doctest::doctest Threads::Threads)

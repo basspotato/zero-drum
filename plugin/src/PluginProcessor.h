@@ -1,12 +1,14 @@
 #pragma once
 
 #include "zd/Engine.h"
+#include "zd/export/Export.h"
 #include "zd/gen/Generator.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -53,6 +55,19 @@ public:
     void addFillToBeat();
     juce::String describeBeat() const;
 
+    /// Export, called from the message thread. Renders on a background thread with its own
+    /// engine copy (current sounds, mix and pattern) and calls `done` on the message thread.
+    using ExportCallback = std::function<void(const zd::exporting::ExportResult&)>;
+    void exportLoopAsync(const juce::File& directory, ExportCallback done);
+    bool isExporting() const noexcept { return exporting_.load(); }
+
+    /// Writes the current pattern as a MIDI clip for drag-and-drop into the DAW: all lanes
+    /// (lane = -1) or one. Returns the temp file, or an invalid File if nothing plays.
+    juce::File writeMidiClip(int lane) const;
+
+    /// Tempo used for exports: the free-run tempo, else the host's last reported tempo.
+    double exportBpm() const noexcept;
+
     /// Maps a MIDI note to a part: GM kick/snare/closed hat on 36/38/42, else 36..51 -> parts 0..15.
     static int noteToPart(int note) noexcept;
 
@@ -75,7 +90,11 @@ private:
     std::uint32_t lockMask() const noexcept;
     void publishPattern(const zd::Pattern& pattern);
     void pullParameters() noexcept;
+    /// Maps the current parameter values onto any engine (the live one or an export copy).
+    void applyParameters(zd::Engine& engine) const noexcept;
     float value(const char* id) const noexcept;
+    zd::Pattern patternSnapshot() const;
+    std::array<std::string, zd::kMaxParts> partNames() const;
 
     juce::AudioProcessorValueTreeState apvts_;
     zd::Engine engine_;
@@ -86,6 +105,10 @@ private:
     mutable std::mutex patternMutex_;
     zd::Pattern uiPattern_;
     std::uint64_t seed_ = 1;
+
+    std::atomic<double> hostBpm_ { 120.0 };
+    std::atomic<bool> exporting_ { false };
+    juce::ThreadPool exportPool_ { juce::ThreadPoolOptions {}.withThreadName("Zero Drum export").withNumberOfThreads(1) };
 
     // Parameter values by ID, built once so the audio thread never constructs juce::Strings.
     std::vector<std::string> paramIds_;

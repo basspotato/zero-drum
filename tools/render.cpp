@@ -1,8 +1,11 @@
 // zd_render: renders the default kit and pattern to a WAV file, offline and without JUCE.
 // Usage: zd_render [out.wav] [bars=4] [bpm=120] [sampleRate=48000] [seed=1] [style]
-// With a style (0..11, see zd::gen::Style) the beat is generated; bpm 0 picks the style's tempo.
+// With a style (0..16, see zd::gen::Style) the beat is generated; bpm 0 picks the style's tempo.
+// If out ends in '/', it is a folder and the loop is exported there instead: mix.wav,
+// a WAV per part, MIDI per part and for all parts, and the pattern (see zd/export/Export.h).
 
 #include "zd/Engine.h"
+#include "zd/export/Export.h"
 #include "zd/gen/Generator.h"
 
 #include <cstdint>
@@ -76,6 +79,23 @@ int main(int argc, char** argv)
             bpm = 0.5 * (range.low + range.high);
         }
         std::printf("style %s\n", std::string(zd::gen::styleName(p.style)).c_str());
+    }
+
+    if (!out.empty() && out.back() == '/')
+    {
+        zd::exporting::ExportOptions options;
+        options.bars = bars;
+        options.bpm = bpm;
+        options.partNames = { "Kick", "Snare", "Hat", "Perc", "808" };
+        const auto result = zd::exporting::exportLoop(*engine, options, out);
+        if (!result.ok)
+        {
+            std::fprintf(stderr, "export failed: %s\n", result.error.c_str());
+            return 1;
+        }
+        for (const auto& f : result.files)
+            std::printf("wrote %s\n", f.string().c_str());
+        return 0;
     }
 
     const auto total = static_cast<std::size_t>(bars * 4 * 60.0 / bpm * sampleRate);

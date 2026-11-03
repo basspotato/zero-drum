@@ -21,6 +21,7 @@ struct PartMix
     float gainDb = 0.0f;
     float pan = 0.0f;   ///< -1 left .. 1 right
     bool mono = false;  ///< true: a new hit chokes the previous one (typical for kicks and 808s)
+    bool mute = false;  ///< still rendered (state stays in step), just not mixed
 };
 
 /// One of the 16 drum parts: an engine type, its parameters, its voices and its mix.

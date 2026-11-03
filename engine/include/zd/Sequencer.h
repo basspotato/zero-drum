@@ -56,8 +56,10 @@ public:
     /// Time of absolute step `k` in beats, including swing and the step's micro offset.
     double stepTime(int lane, std::int64_t k) const noexcept;
 
-private:
+    /// Whether absolute step `k` of `lane` passes its probability draw (seeded, block-size free).
     bool passesProbability(int lane, std::int64_t k, float probability) const noexcept;
+
+private:
 
     Pattern pattern_;
     std::uint64_t seed_ = 1;

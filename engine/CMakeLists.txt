@@ -4,6 +4,7 @@ add_library(zd_engine STATIC
     src/Strip.cpp
     src/gen/Generator.cpp
     src/PatternIO.cpp
+    src/export/Export.cpp
     src/engines/AnalogKick.cpp
     src/engines/AnalogSnare.cpp
     src/engines/SamplePlayer.cpp

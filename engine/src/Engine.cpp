@@ -123,6 +123,9 @@ void Part::render(float* left, float* right, int numSamples) noexcept
         voice(i).render(mono, numSamples);
     strip_.process(mono, numSamples, strip);
 
+    if (mix.mute)
+        return;
+
     float panL = 0.0f, panR = 0.0f;
     dsp::constantPowerPan(std::clamp(mix.pan, -1.0f, 1.0f), panL, panR);
     const float gain = dsp::dbToGain(mix.gainDb);
