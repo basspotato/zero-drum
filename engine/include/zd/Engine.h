@@ -1,10 +1,13 @@
 #pragma once
 
 #include "zd/Sequencer.h"
+#include "zd/Strip.h"
 #include "zd/Types.h"
 #include "zd/engines/AnalogKick.h"
 #include "zd/engines/AnalogSnare.h"
+#include "zd/engines/FmPerc.h"
 #include "zd/engines/SamplePlayer.h"
+#include "zd/engines/Sub808.h"
 
 #include <array>
 #include <vector>
@@ -24,7 +27,8 @@ class Part
 {
 public:
     void prepare(double sampleRate, int maxBlockSize);
-    void trigger(float velocity) noexcept;
+    /// `note` is a MIDI note for pitched engines (808); -1 uses the part's own tune.
+    void trigger(float velocity, int note = -1) noexcept;
     void render(float* left, float* right, int numSamples) noexcept;
     bool isActive() const noexcept;
     void reset() noexcept;
@@ -32,8 +36,11 @@ public:
     EngineType type = EngineType::Off;
     KickParams kick;
     SnareParams snare;
+    FmParams fm;
+    Sub808Params sub;
     SampleParams sampleParams;
     SampleDataPtr sample; ///< set only while audio is stopped (see Engine::setSample)
+    StripParams strip;
     PartMix mix;
 
 private:
@@ -43,8 +50,12 @@ private:
     std::array<AnalogKickVoice, kVoicesPerPart> kickVoices_;
     std::array<AnalogSnareVoice, kVoicesPerPart> snareVoices_;
     std::array<SamplePlayerVoice, kVoicesPerPart> sampleVoices_;
+    std::array<FmPercVoice, kVoicesPerPart> fmVoices_;
+    std::array<Sub808Voice, kVoicesPerPart> subVoices_;
+    Strip strip_;
     std::vector<float> scratch_;
     unsigned ageCounter_ = 0;
+    double lastSubHz_ = 0.0;
 };
 
 /// The Zero Drum engine. Framework-free: no JUCE, no OS calls.
@@ -101,7 +112,8 @@ private:
     long long samplePosition_ = 0;
 };
 
-/// Sets up the default kit: kick on part 0, snare on part 1, synthesized hat sample on part 2.
+/// Sets up the default kit: kick (part 0), snare (1), synthesized hat sample (2),
+/// FM percussion (3) and 808 sub (4).
 /// Allocates; call after prepare() (the hat is rendered at the engine's sample rate).
 void loadDefaultKit(Engine& engine);
 

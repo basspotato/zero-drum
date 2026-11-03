@@ -12,7 +12,8 @@ plugin shell and the DSP test harness. See the design doc for the full plan.
 | --- | --- |
 | `engine/` | Framework-free C++20 engine (`zd_engine`). Never includes JUCE. |
 | `engine/include/zd/dsp/` | DSP building blocks: ADAA saturation, ZDF state-variable filter, seeded RNG |
-| `engine/include/zd/engines/` | Voice engines: analog kick, analog snare, sample player |
+| `engine/include/zd/engines/` | Voice engines: analog kick, analog snare, sample player, FM percussion, 808 sub |
+| `engine/include/zd/Strip.h` | Per-part channel strip: transient shaper, filter, drive |
 | `engine/include/zd/Sequencer.h` | Sample-accurate step sequencer: swing, micro-timing, probability, polymeter |
 | `plugin/` | JUCE 9 shell: parameters, MIDI, host transport; builds CLAP, VST3, AU, Standalone |
 | `tests/` | doctest suite: block-size null test, aliasing test, determinism, engine behaviour |
@@ -48,6 +49,8 @@ Render the demo beat: `./build/zd_render demo.wav 8 94` (bars, BPM).
 - Press play in the host: the default pattern follows the host tempo and position.
 - In the standalone app (no host transport), turn on **Free Run**.
 - MIDI: note 36 = kick, 38 = snare, 42 = hat; notes 36 to 51 map to parts 0 to 15.
+- MIDI channel 2 plays the 808 melodically (with glide between overlapping notes).
+- Default kit: kick (part 0), snare (1), hat (2), FM perc (3), 808 (4).
 
 ## Engineering rules
 

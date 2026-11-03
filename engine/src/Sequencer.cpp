@@ -65,7 +65,7 @@ int Sequencer::collect(const Transport& t, double sampleRate, int numSamples,
             if (count >= capacity)
                 return count;
 
-            out[count++] = NoteEvent { static_cast<int>(offset), lane, s.velocity };
+            out[count++] = NoteEvent { static_cast<int>(offset), lane, s.velocity, s.note };
         }
     }
     return count;
@@ -89,6 +89,17 @@ void loadDefaultPattern(Pattern& p)
     auto& hat = p.lanes[2];
     for (int s = 0; s < 16; ++s)
         hat.steps[static_cast<std::size_t>(s)] = { true, (s % 2 == 0) ? 0.9f : 0.5f, (s % 2 == 0) ? 1.0f : 0.8f, 0.0f };
+
+    auto& perc = p.lanes[3];
+    perc.steps[3] = { true, 0.8f, 0.7f, 0.0f };
+    perc.steps[11] = { true, 0.7f, 0.7f, 0.0f };
+
+    // 808 follows the kick: A1, A1, C2, G1.
+    auto& sub = p.lanes[4];
+    sub.steps[0] = { true, 1.0f, 1.0f, 0.0f, 33 };
+    sub.steps[7] = { true, 0.9f, 1.0f, 0.0f, 33 };
+    sub.steps[10] = { true, 0.9f, 1.0f, 0.0f, 36 };
+    sub.steps[14] = { true, 0.8f, 1.0f, 0.0f, 31 };
 }
 
 } // namespace zd

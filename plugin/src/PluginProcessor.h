@@ -5,6 +5,11 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
+#include <atomic>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 /// JUCE shell around the framework-free zd::Engine. It owns no DSP: it maps host
 /// parameters, MIDI and transport onto the engine and copies audio out.
@@ -43,8 +48,22 @@ public:
     /// Maps a MIDI note to a part: GM kick/snare/closed hat on 36/38/42, else 36..51 -> parts 0..15.
     static int noteToPart(int note) noexcept;
 
+    static constexpr int kSubMidiChannel = 2;
+    static constexpr int kNumStripParts = 5;
+    static constexpr int kNumStripSuffixes = 6;
+    static constexpr const char* kStripNames[kNumStripParts] { "Kick", "Snare", "Hat", "Perc", "808" };
+    static constexpr const char* kStripSuffixes[kNumStripSuffixes] { "Attack", "Sustain", "FilterMode", "Cutoff", "Resonance", "StripDrive" };
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    static constexpr int stripSuffixIndex(const char* suffix) noexcept
+    {
+        for (int k = 0; k < kNumStripSuffixes; ++k)
+            if (std::string_view(kStripSuffixes[k]) == suffix)
+                return k;
+        return 0;
+    }
+    float stripValue(int part, const char* suffix) const noexcept;
     void pullParameters() noexcept;
     float value(const char* id) const noexcept;
 
@@ -52,6 +71,10 @@ private:
     zd::Engine engine_;
     zd::InternalClock freeRunClock_ { 120.0 };
     std::array<zd::NoteEvent, 256> midiEvents_ {};
+    std::array<std::array<std::atomic<float>*, kNumStripSuffixes>, kNumStripParts> stripParams_ {};
+    // Parameter values by ID, built once so the audio thread never constructs juce::Strings.
+    std::vector<std::string> paramIds_;
+    std::unordered_map<std::string_view, std::atomic<float>*> paramValues_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZeroDrumProcessor)
 };

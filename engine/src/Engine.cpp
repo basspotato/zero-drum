@@ -14,6 +14,9 @@ void Part::prepare(double sampleRate, int maxBlockSize)
     for (auto& v : kickVoices_) v.prepare(sampleRate);
     for (auto& v : snareVoices_) v.prepare(sampleRate);
     for (auto& v : sampleVoices_) v.prepare(sampleRate);
+    for (auto& v : fmVoices_) v.prepare(sampleRate);
+    for (auto& v : subVoices_) v.prepare(sampleRate);
+    strip_.prepare(sampleRate);
     scratch_.assign(static_cast<std::size_t>(maxBlockSize), 0.0f);
 }
 
@@ -24,6 +27,8 @@ Voice& Part::voice(int i) noexcept
     {
         case EngineType::AnalogSnare: return snareVoices_[idx];
         case EngineType::Sample: return sampleVoices_[idx];
+        case EngineType::FmPerc: return fmVoices_[idx];
+        case EngineType::Sub808: return subVoices_[idx];
         case EngineType::AnalogKick:
         case EngineType::Off:
         default: return kickVoices_[idx];
@@ -44,10 +49,16 @@ int Part::allocateVoice() noexcept
     return oldest;
 }
 
-void Part::trigger(float velocity) noexcept
+void Part::trigger(float velocity, int note) noexcept
 {
     if (type == EngineType::Off)
         return;
+
+    // 808 glide starts from the previous note only while that note is still sounding.
+    bool glideFromPrevious = false;
+    if (type == EngineType::Sub808)
+        for (int i = 0; i < kVoicesPerPart; ++i)
+            glideFromPrevious = glideFromPrevious || subVoices_[static_cast<std::size_t>(i)].isActive();
 
     if (mix.mono)
         for (int i = 0; i < kVoicesPerPart; ++i)
@@ -60,6 +71,15 @@ void Part::trigger(float velocity) noexcept
         case EngineType::AnalogKick: kickVoices_[idx].trigger(kick, velocity); break;
         case EngineType::AnalogSnare: snareVoices_[idx].trigger(snare, velocity); break;
         case EngineType::Sample: sampleVoices_[idx].trigger(sample.get(), sampleParams, velocity); break;
+        case EngineType::FmPerc: fmVoices_[idx].trigger(fm, velocity); break;
+        case EngineType::Sub808:
+        {
+            const double target = note >= 0 ? noteToHz(note) : static_cast<double>(sub.tuneHz);
+            const double start = (glideFromPrevious && sub.glide > 0.0f && lastSubHz_ > 0.0) ? lastSubHz_ : target;
+            subVoices_[idx].trigger(sub, velocity, target, start);
+            lastSubHz_ = target;
+            break;
+        }
         case EngineType::Off: break;
     }
     voice(i).age = ++ageCounter_;
@@ -69,7 +89,9 @@ bool Part::isActive() const noexcept
 {
     return std::any_of(kickVoices_.begin(), kickVoices_.end(), [](const auto& v) { return v.isActive(); })
         || std::any_of(snareVoices_.begin(), snareVoices_.end(), [](const auto& v) { return v.isActive(); })
-        || std::any_of(sampleVoices_.begin(), sampleVoices_.end(), [](const auto& v) { return v.isActive(); });
+        || std::any_of(sampleVoices_.begin(), sampleVoices_.end(), [](const auto& v) { return v.isActive(); })
+        || std::any_of(fmVoices_.begin(), fmVoices_.end(), [](const auto& v) { return v.isActive(); })
+        || std::any_of(subVoices_.begin(), subVoices_.end(), [](const auto& v) { return v.isActive(); });
 }
 
 void Part::reset() noexcept
@@ -77,17 +99,29 @@ void Part::reset() noexcept
     for (auto& v : kickVoices_) v.reset();
     for (auto& v : snareVoices_) v.reset();
     for (auto& v : sampleVoices_) v.reset();
+    for (auto& v : fmVoices_) v.reset();
+    for (auto& v : subVoices_) v.reset();
+    strip_.reset();
+    lastSubHz_ = 0.0;
 }
 
 void Part::render(float* left, float* right, int numSamples) noexcept
 {
-    if (type == EngineType::Off || numSamples <= 0 || !isActive())
+    if (type == EngineType::Off || numSamples <= 0)
+        return;
+
+    // The strip runs even when no voice is sounding, so filter and envelope tails evolve
+    // identically whatever the block size. A part with a neutral strip and no voices is skipped.
+    const bool stripNeutral = strip.attack == 0.0f && strip.sustain == 0.0f
+                           && strip.filterMode == FilterMode::Off && strip.drive == 0.0f;
+    if (stripNeutral && !isActive())
         return;
 
     float* mono = scratch_.data();
     std::fill(mono, mono + numSamples, 0.0f);
     for (int i = 0; i < kVoicesPerPart; ++i)
         voice(i).render(mono, numSamples);
+    strip_.process(mono, numSamples, strip);
 
     float panL = 0.0f, panR = 0.0f;
     dsp::constantPowerPan(std::clamp(mix.pan, -1.0f, 1.0f), panL, panR);
@@ -155,7 +189,7 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
             int numChunk = 0;
             for (int i = 0; i < numExternal && numChunk < static_cast<int>(chunkEvents.size()); ++i)
                 if (external[i].offset >= done && external[i].offset < done + n)
-                    chunkEvents[static_cast<std::size_t>(numChunk++)] = { external[i].offset - done, external[i].part, external[i].velocity };
+                    chunkEvents[static_cast<std::size_t>(numChunk++)] = { external[i].offset - done, external[i].part, external[i].velocity, external[i].note };
             process(t, chunkEvents.data(), numChunk, left + done, right + done, n);
             t.ppqPosition += static_cast<double>(n) * t.bpm / (60.0 * sampleRate_);
             done += n;
@@ -166,7 +200,7 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
     int count = sequencer_.collect(transport, sampleRate_, numSamples, events_.data(), kMaxEventsPerBlock);
     for (int i = 0; i < numExternal && count < kMaxEventsPerBlock; ++i)
         if (external[i].part >= 0 && external[i].part < kMaxParts)
-            events_[static_cast<std::size_t>(count++)] = NoteEvent { std::clamp(external[i].offset, 0, numSamples - 1), external[i].part, external[i].velocity };
+            events_[static_cast<std::size_t>(count++)] = NoteEvent { std::clamp(external[i].offset, 0, numSamples - 1), external[i].part, external[i].velocity, external[i].note };
 
     // Stable insertion sort by offset (std::stable_sort may allocate). Ties keep lane order,
     // so output is deterministic. Event counts per block are small.
@@ -188,7 +222,7 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
         const auto& e = events_[static_cast<std::size_t>(i)];
         renderParts(left, right, position, e.offset);
         position = e.offset;
-        parts_[static_cast<std::size_t>(e.part)].trigger(e.velocity);
+        parts_[static_cast<std::size_t>(e.part)].trigger(e.velocity, e.note);
     }
     renderParts(left, right, position, numSamples);
 }
@@ -198,6 +232,7 @@ void loadDefaultKit(Engine& engine)
     auto& kick = engine.part(0);
     kick.type = EngineType::AnalogKick;
     kick.mix.mono = true;
+    kick.mix.gainDb = -2.0f;
 
     auto& snare = engine.part(1);
     snare.type = EngineType::AnalogSnare;
@@ -208,6 +243,16 @@ void loadDefaultKit(Engine& engine)
     hat.mix.gainDb = -8.0f;
     hat.mix.pan = 0.15f;
     engine.setSample(2, makeSynthHatSample(engine.sampleRate()));
+
+    auto& perc = engine.part(3);
+    perc.type = EngineType::FmPerc;
+    perc.mix.gainDb = -12.0f;
+    perc.mix.pan = -0.3f;
+
+    auto& sub = engine.part(4);
+    sub.type = EngineType::Sub808;
+    sub.mix.mono = true;
+    sub.mix.gainDb = -10.0f;
 }
 
 } // namespace zd
