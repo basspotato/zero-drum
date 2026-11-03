@@ -19,36 +19,49 @@ void Part::prepare(double sampleRate, int maxBlockSize)
     for (auto& v : sampleVoices_) v.prepare(sampleRate);
     for (auto& v : fmVoices_) v.prepare(sampleRate);
     for (auto& v : subVoices_) v.prepare(sampleRate);
+    for (auto& v : clapVoices_) v.prepare(sampleRate);
     strip_.prepare(sampleRate);
     scratch_.assign(static_cast<std::size_t>(maxBlockSize), 0.0f);
 }
 
-Voice& Part::voice(int i) noexcept
+Voice& Part::voiceOf(EngineType t, int i) noexcept
 {
     const auto idx = static_cast<std::size_t>(i);
-    switch (type)
+    switch (t)
     {
         case EngineType::AnalogSnare: return snareVoices_[idx];
         case EngineType::Sample: return sampleVoices_[idx];
         case EngineType::FmPerc: return fmVoices_[idx];
         case EngineType::Sub808: return subVoices_[idx];
+        case EngineType::Clap: return clapVoices_[idx];
         case EngineType::AnalogKick:
         case EngineType::Off:
         default: return kickVoices_[idx];
     }
 }
 
-int Part::allocateVoice() noexcept
+template <typename F>
+void Part::forEachVoice(F&& f) noexcept
+{
+    for (auto& v : kickVoices_) f(v);
+    for (auto& v : snareVoices_) f(v);
+    for (auto& v : sampleVoices_) f(v);
+    for (auto& v : fmVoices_) f(v);
+    for (auto& v : subVoices_) f(v);
+    for (auto& v : clapVoices_) f(v);
+}
+
+int Part::allocateVoice(EngineType t) noexcept
 {
     int oldest = 0;
     for (int i = 0; i < kVoicesPerPart; ++i)
     {
-        if (!voice(i).isActive())
+        if (!voiceOf(t, i).isActive())
             return i;
-        if (voice(i).age < voice(oldest).age)
+        if (voiceOf(t, i).age < voiceOf(t, oldest).age)
             oldest = i;
     }
-    voice(oldest).reset();
+    voiceOf(t, oldest).kill();
     return oldest;
 }
 
@@ -63,18 +76,26 @@ void Part::trigger(float velocity, int note) noexcept
         for (int i = 0; i < kVoicesPerPart; ++i)
             glideFromPrevious = glideFromPrevious || subVoices_[static_cast<std::size_t>(i)].isActive();
 
+    // Mono parts choke everything still sounding, layers and voices of a previous type too.
     if (mix.mono)
-        for (int i = 0; i < kVoicesPerPart; ++i)
-            voice(i).kill();
+        forEachVoice([](Voice& v) { v.kill(); });
 
-    const int i = allocateVoice();
+    triggerEngine(type, velocity, note, glideFromPrevious);
+    if (layer != EngineType::Off && layer != type)
+        triggerEngine(layer, velocity * dsp::dbToGain(std::clamp(layerGainDb, -48.0f, 6.0f)), note, false);
+}
+
+void Part::triggerEngine(EngineType t, float velocity, int note, bool glideFromPrevious) noexcept
+{
+    const int i = allocateVoice(t);
     const auto idx = static_cast<std::size_t>(i);
-    switch (type)
+    switch (t)
     {
         case EngineType::AnalogKick: kickVoices_[idx].trigger(kick, velocity); break;
         case EngineType::AnalogSnare: snareVoices_[idx].trigger(snare, velocity); break;
         case EngineType::Sample: sampleVoices_[idx].trigger(sample.get(), sampleParams, velocity); break;
         case EngineType::FmPerc: fmVoices_[idx].trigger(fm, velocity); break;
+        case EngineType::Clap: clapVoices_[idx].trigger(clap, velocity); break;
         case EngineType::Sub808:
         {
             const double target = note >= 0 ? noteToHz(note) : static_cast<double>(sub.tuneHz);
@@ -83,9 +104,9 @@ void Part::trigger(float velocity, int note) noexcept
             lastSubHz_ = target;
             break;
         }
-        case EngineType::Off: break;
+        case EngineType::Off: return;
     }
-    voice(i).age = ++ageCounter_;
+    voiceOf(t, i).age = ++ageCounter_;
 }
 
 bool Part::isActive() const noexcept
@@ -94,7 +115,8 @@ bool Part::isActive() const noexcept
         || std::any_of(snareVoices_.begin(), snareVoices_.end(), [](const auto& v) { return v.isActive(); })
         || std::any_of(sampleVoices_.begin(), sampleVoices_.end(), [](const auto& v) { return v.isActive(); })
         || std::any_of(fmVoices_.begin(), fmVoices_.end(), [](const auto& v) { return v.isActive(); })
-        || std::any_of(subVoices_.begin(), subVoices_.end(), [](const auto& v) { return v.isActive(); });
+        || std::any_of(subVoices_.begin(), subVoices_.end(), [](const auto& v) { return v.isActive(); })
+        || std::any_of(clapVoices_.begin(), clapVoices_.end(), [](const auto& v) { return v.isActive(); });
 }
 
 void Part::reset() noexcept
@@ -104,6 +126,7 @@ void Part::reset() noexcept
     for (auto& v : sampleVoices_) v.reset();
     for (auto& v : fmVoices_) v.reset();
     for (auto& v : subVoices_) v.reset();
+    for (auto& v : clapVoices_) v.reset();
     strip_.reset();
     lastSubHz_ = 0.0;
     duckLevel_ = 0.0;
@@ -143,7 +166,7 @@ float Part::duckGain() noexcept
 
 void Part::render(float* left, float* right, int numSamples) noexcept
 {
-    if (type == EngineType::Off || numSamples <= 0)
+    if (numSamples <= 0 || (type == EngineType::Off && !isActive()))
         return;
 
     // The strip runs even when no voice is sounding, so filter and envelope tails evolve
@@ -161,8 +184,9 @@ void Part::render(float* left, float* right, int numSamples) noexcept
 
     float* mono = scratch_.data();
     std::fill(mono, mono + numSamples, 0.0f);
-    for (int i = 0; i < kVoicesPerPart; ++i)
-        voice(i).render(mono, numSamples);
+    // Every pool renders (inactive voices return at once): layers sound, and voices of a
+    // previous engine type ring out after the type changes instead of being cut.
+    forEachVoice([&](Voice& v) { v.render(mono, numSamples); });
     strip_.process(mono, numSamples, strip);
     if (mix.duck > 0.0f || duckLevel_ > 0.0 || duckAttacking_)
         for (int n = 0; n < numSamples; ++n)

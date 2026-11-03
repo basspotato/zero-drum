@@ -69,6 +69,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     layout.add(floatParam("snareSnappy", "Snare Snappy", Range { 0.0f, 1.0f }, 0.6f));
     layout.add(floatParam("snareDrive", "Snare Drive", Range { 0.0f, 1.0f }, 0.15f));
     layout.add(floatParam("snareLevel", "Snare Level", Range { -48.0f, 6.0f }, -3.0f, "dB"));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "snareEngine", 1 }, "Snare Engine",
+                                                            juce::StringArray { "Snare", "Clap" }, 0));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "snareLayer", 1 }, "Snare Layer",
+                                                            juce::StringArray { "None", "Clap", "Snare" }, 0));
+    layout.add(floatParam("snareLayerLevel", "Snare Layer Level", Range { -24.0f, 6.0f }, -4.0f, "dB"));
+    layout.add(floatParam("clapTone", "Clap Tone", skewed(500.0f, 4000.0f, 1300.0f), 1200.0f, "Hz"));
+    layout.add(floatParam("clapSpread", "Clap Spread", Range { 3.0f, 25.0f }, 9.0f, "ms"));
+    layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID { "clapHands", 1 }, "Clap Hands", 1, 6, 4));
+    layout.add(floatParam("clapDecay", "Clap Tail Decay", skewed(50.0f, 1500.0f, 300.0f), 300.0f, "ms"));
+    layout.add(floatParam("clapTail", "Clap Tail", Range { 0.0f, 1.0f }, 0.6f));
+    layout.add(floatParam("clapSnap", "Clap Snap", Range { 0.0f, 1.0f }, 0.4f));
+    layout.add(floatParam("clapDrive", "Clap Drive", Range { 0.0f, 1.0f }, 0.2f));
 
     // Hat (sample part)
     layout.add(floatParam("hatPitch", "Hat Pitch", Range { -24.0f, 24.0f }, 0.0f, "st"));
@@ -164,6 +176,19 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
     snare.snare.snappy = value("snareSnappy");
     snare.snare.drive = value("snareDrive");
     snare.mix.gainDb = value("snareLevel");
+    snare.type = value("snareEngine") > 0.5f ? zd::EngineType::Clap : zd::EngineType::AnalogSnare;
+    {
+        const int layer = static_cast<int>(value("snareLayer"));
+        snare.layer = layer == 1 ? zd::EngineType::Clap : layer == 2 ? zd::EngineType::AnalogSnare : zd::EngineType::Off;
+    }
+    snare.layerGainDb = value("snareLayerLevel");
+    snare.clap.toneHz = value("clapTone");
+    snare.clap.spread = value("clapSpread") * 0.001f;
+    snare.clap.bursts = static_cast<int>(value("clapHands"));
+    snare.clap.decay = value("clapDecay") * 0.001f;
+    snare.clap.tail = value("clapTail");
+    snare.clap.snap = value("clapSnap");
+    snare.clap.drive = value("clapDrive");
 
     auto& hat = engine.part(2);
     hat.sampleParams.pitchSemitones = value("hatPitch");
@@ -439,6 +464,16 @@ void ZeroDrumProcessor::loadStyleKit(zd::gen::Style style, int rootNote, std::ui
         setParam("snareSnappy", kit.snare.snappy);
         setParam("snareDrive", kit.snare.drive);
         setParam("snareLevel", lv[1]);
+        setParam("snareEngine", kit.snareEngine == zd::EngineType::Clap ? 1.0f : 0.0f);
+        setParam("snareLayer", kit.snareLayer == zd::EngineType::Clap ? 1.0f : kit.snareLayer == zd::EngineType::AnalogSnare ? 2.0f : 0.0f);
+        setParam("snareLayerLevel", kit.snareLayerDb);
+        setParam("clapTone", kit.clap.toneHz);
+        setParam("clapSpread", kit.clap.spread * 1000.0f);
+        setParam("clapHands", static_cast<float>(kit.clap.bursts));
+        setParam("clapDecay", kit.clap.decay * 1000.0f);
+        setParam("clapTail", kit.clap.tail);
+        setParam("clapSnap", kit.clap.snap);
+        setParam("clapDrive", kit.clap.drive);
     }
     if (!keep(2))
     {

@@ -17,6 +17,11 @@ struct StyleKit
     SampleParams hat;
     FmParams perc;
     Sub808Params sub;
+    ClapParams clap;
+    /// The snare lane's engine (snare or clap) and an optional second layer on it.
+    EngineType snareEngine = EngineType::AnalogSnare;
+    EngineType snareLayer = EngineType::Off;
+    float snareLayerDb = -4.0f;
     std::array<StripParams, 5> strips {};
     std::array<float, 5> levelDb {};
     /// The style's home key for the 808 (MIDI note).

@@ -45,6 +45,7 @@ enum class EngineType : std::uint8_t
     Sample,
     FmPerc,
     Sub808,
+    Clap, ///< appended: saved states keep their numbers
 };
 
 } // namespace zd

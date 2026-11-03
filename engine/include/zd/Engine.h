@@ -8,6 +8,7 @@
 #include "zd/engines/FmPerc.h"
 #include "zd/engines/SamplePlayer.h"
 #include "zd/engines/Sub808.h"
+#include "zd/engines/Clap.h"
 #include "zd/dsp/Clipper.h"
 
 #include <array>
@@ -56,19 +57,28 @@ public:
     FmParams fm;
     Sub808Params sub;
     SampleParams sampleParams;
+    ClapParams clap;
+    /// Second layer: every hit also plays this engine (with its own params above), e.g. a
+    /// clap stacked on the snare. Off = no layer. Layering the part's own type is ignored.
+    EngineType layer = EngineType::Off;
+    float layerGainDb = -4.0f;
     SampleDataPtr sample; ///< set only while audio is stopped (see Engine::setSample)
     StripParams strip;
     PartMix mix;
 
 private:
-    Voice& voice(int i) noexcept;
-    int allocateVoice() noexcept;
+    Voice& voice(int i) noexcept { return voiceOf(type, i); }
+    Voice& voiceOf(EngineType t, int i) noexcept;
+    int allocateVoice(EngineType t) noexcept;
+    void triggerEngine(EngineType t, float velocity, int note, bool glideFromPrevious) noexcept;
+    template <typename F> void forEachVoice(F&& f) noexcept;
 
     std::array<AnalogKickVoice, kVoicesPerPart> kickVoices_;
     std::array<AnalogSnareVoice, kVoicesPerPart> snareVoices_;
     std::array<SamplePlayerVoice, kVoicesPerPart> sampleVoices_;
     std::array<FmPercVoice, kVoicesPerPart> fmVoices_;
     std::array<Sub808Voice, kVoicesPerPart> subVoices_;
+    std::array<ClapVoice, kVoicesPerPart> clapVoices_;
     Strip strip_;
     std::vector<float> scratch_;
     unsigned ageCounter_ = 0;
