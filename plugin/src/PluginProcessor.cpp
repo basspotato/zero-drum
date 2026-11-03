@@ -281,6 +281,20 @@ void ZeroDrumProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
 
 // ------------------------------------------------------------------------------- export
 
+namespace {
+
+/// Keeps non-ASCII paths intact (Windows user folders often have them).
+std::filesystem::path toPath(const juce::File& file)
+{
+#if JUCE_WINDOWS
+    return std::filesystem::path(file.getFullPathName().toWideCharPointer());
+#else
+    return std::filesystem::path(file.getFullPathName().toStdString());
+#endif
+}
+
+} // namespace
+
 double ZeroDrumProcessor::exportBpm() const noexcept
 {
     const double bpm = value("freeRun") > 0.5f ? static_cast<double>(value("freeRunBpm")) : hostBpm_.load(std::memory_order_relaxed);
@@ -320,7 +334,7 @@ void ZeroDrumProcessor::exportLoopAsync(const juce::File& directory, ExportCallb
     options.bpm = exportBpm();
     options.bars = zd::exporting::loopBars(engine->sequencer().pattern());
     options.partNames = partNames();
-    const auto path = std::filesystem::path(directory.getFullPathName().toStdString());
+    const auto path = toPath(directory);
 
     exportPool_.addJob([this, engine, options, path, done = std::move(done)] {
         auto result = zd::exporting::exportLoop(*engine, options, path);
@@ -347,7 +361,7 @@ juce::File ZeroDrumProcessor::writeMidiClip(int lane) const
         return {};
     const juce::String which = lane >= 0 ? juce::String(names[static_cast<std::size_t>(lane)]) : juce::String("Beat");
     const auto file = dir.getChildFile("Zero Drum " + which + " " + juce::String(juce::roundToInt(exportBpm())) + " BPM.mid");
-    if (!zd::exporting::writeMidi(std::filesystem::path(file.getFullPathName().toStdString()), tracks, exportBpm()))
+    if (!zd::exporting::writeMidi(toPath(file), tracks, exportBpm()))
         return {};
     return file;
 }
