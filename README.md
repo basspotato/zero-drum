@@ -1,3 +1,63 @@
 # Zero Drum
 
-Hybrid synth-and-sample drum machine plugin (CLAP, VST3, AU, standalone). Fully local.
+A hybrid synth-and-sample drum machine for EDM, hip-hop, electronic and pop. CLAP, VST3, AU and
+standalone. Fully local: no cloud, no account, no subscription.
+
+This repository is at **Phase 0 (Foundations)**: the engine core, the first sound engines, the JUCE
+plugin shell and the DSP test harness. See the design doc for the full plan.
+
+## Layout
+
+| Path | What it is |
+| --- | --- |
+| `engine/` | Framework-free C++20 engine (`zd_engine`). Never includes JUCE. |
+| `engine/include/zd/dsp/` | DSP building blocks: ADAA saturation, ZDF state-variable filter, seeded RNG |
+| `engine/include/zd/engines/` | Voice engines: analog kick, analog snare, sample player |
+| `engine/include/zd/Sequencer.h` | Sample-accurate step sequencer: swing, micro-timing, probability, polymeter |
+| `plugin/` | JUCE 9 shell: parameters, MIDI, host transport; builds CLAP, VST3, AU, Standalone |
+| `tests/` | doctest suite: block-size null test, aliasing test, determinism, engine behaviour |
+| `tools/render.cpp` | `zd_render`: renders the default beat to a WAV, no JUCE needed |
+
+## Build
+
+Requirements: CMake 3.22+, a C++20 compiler (Clang 15+, GCC 12+, MSVC 2022), Ninja recommended.
+JUCE, clap-juce-extensions and doctest are fetched automatically at pinned versions.
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Plugins land in `build/plugin/ZeroDrum_artefacts/Release/{CLAP,VST3,AU,Standalone}`.
+
+Engine only (fast, no JUCE download): add `-DZD_BUILD_PLUGIN=OFF`.
+
+On Linux, install the JUCE dependencies first:
+
+```sh
+sudo apt-get install libasound2-dev libcurl4-openssl-dev libfontconfig1-dev libfreetype-dev \
+  libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxi-dev libxinerama-dev \
+  libxrandr-dev libxrender-dev libgl1-mesa-dev
+```
+
+Render the demo beat: `./build/zd_render demo.wav 8 94` (bars, BPM).
+
+## Playing it
+
+- Press play in the host: the default pattern follows the host tempo and position.
+- In the standalone app (no host transport), turn on **Free Run**.
+- MIDI: note 36 = kick, 38 = snare, 42 = hat; notes 36 to 51 map to parts 0 to 15.
+
+## Engineering rules
+
+- The engine never includes JUCE or OS headers; the plugin is a thin shell.
+- Nothing on the audio thread allocates, locks, waits or touches disk.
+- Output must be bit-identical for any host block size (enforced by the null test).
+- All randomness is seeded; the same project renders the same audio every time.
+- Every nonlinearity is anti-aliased (ADAA) or oversampled.
+
+## Licence
+
+Proprietary, all rights reserved. See `LICENSE`. JUCE is used under its commercial licence terms;
+check the JUCE licence tier before distributing builds.
