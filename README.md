@@ -14,7 +14,7 @@ plugin shell and the DSP test harness. See the design doc for the full plan.
 | `engine/include/zd/dsp/` | DSP building blocks: ADAA saturation, ZDF state-variable filter, seeded RNG |
 | `engine/include/zd/engines/` | Voice engines: analog kick, analog snare, sample player, FM percussion, 808 sub |
 | `engine/include/zd/Strip.h` | Per-part channel strip: transient shaper, filter, drive |
-| `engine/include/zd/gen/` | Rule-based beat generator: 12 styles, density, complexity, locks, mutate, fill |
+| `engine/include/zd/gen/` | Rule-based beat generator: 17 styles, density, complexity, locks, mutate, fill |
 | `engine/include/zd/PatternIO.h` | Versioned plain-text pattern format (plugin state, future .zdloop) |
 | `engine/include/zd/Sequencer.h` | Sample-accurate step sequencer: swing, micro-timing, probability, polymeter |
 | `plugin/` | JUCE 9 shell: parameters, MIDI, host transport; builds CLAP, VST3, AU, Standalone |

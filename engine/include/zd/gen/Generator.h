@@ -25,6 +25,11 @@ enum class Style : std::uint8_t
     JerseyClub,
     Reggaeton,
     Pop,
+    HipHop,
+    Dubstep,
+    Trance,
+    Hardstyle,
+    Festival,
     kCount,
 };
 

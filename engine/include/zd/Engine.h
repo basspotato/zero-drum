@@ -90,6 +90,11 @@ public:
 
     double sampleRate() const noexcept { return sampleRate_; }
 
+    /// Master output gain. Realtime safe. Default 0 dB; the plugin and renderer use
+    /// kDefaultMasterDb for headroom until the oversampled master clipper lands.
+    void setMasterGainDb(float db) noexcept;
+    static constexpr float kDefaultMasterDb = -2.0f;
+
 private:
     void renderParts(float* left, float* right, int from, int to) noexcept;
     void applyPendingPattern() noexcept;
@@ -103,6 +108,7 @@ private:
     std::array<NoteEvent, kMaxEventsPerBlock> events_ {};
     double sampleRate_ = 48000.0;
     int maxBlockSize_ = 0;
+    float masterGain_ = 1.0f;
 };
 
 /// Free-running clock for the standalone app and tests: advances a sample counter and

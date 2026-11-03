@@ -137,8 +137,49 @@ const StyleDef& def(Style style) noexcept
               { 0, { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .3f, .2f }, .6f },
               {} } },
           .15f, .03f, 2, false },
+        // Modern hip-hop: laid-back kick, 2 and 4 backbeat, 8th hats with 16th pickups, 808 under the kick.
+        { "Hip-hop", { 88, 100 }, 0.55,
+          { { { bits({ 0 }), { 0, 0, .15f, .25f, 0, 0, .2f, .45f, 0, .15f, .55f, .1f, 0, 0, .25f, .1f }, .9f },
+              { bits({ 4, 12 }), uniform(0.f), .9f, 0.03f },
+              { bits({ 0, 2, 4, 6, 8, 10, 12, 14 }), uniform(.25f), .6f },
+              { 0, { 0, 0, 0, .1f, 0, 0, .1f, 0, 0, 0, 0, .1f, 0, 0, .15f, 0 }, .6f },
+              {} } },
+          .35f, .2f, 2, true },
+        // Dubstep: half-time at 140, snare on beat 3, sparse syncopated kicks, sub under the kick.
+        { "Dubstep", { 138, 150 }, 0.5,
+          { { { bits({ 0 }), { 0, 0, 0, .25f, 0, 0, .2f, 0, 0, 0, .5f, .15f, 0, 0, .2f, 0 }, .95f },
+              { bits({ 8 }), { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, .15f, .25f }, .95f },
+              { bits({ 0, 4, 8, 12 }), uniform(.3f), .55f },
+              { 0, { 0, 0, .1f, 0, 0, 0, .15f, 0, 0, .1f, 0, 0, 0, .15f, 0, .1f }, .7f },
+              {} } },
+          .1f, .25f, 3, true },
+        // Trance: four-on-the-floor, clap on 2 and 4, offbeat open hats, rolling offbeat bass.
+        { "Trance", { 132, 142 }, 0.5,
+          { { { bits({ 0, 4, 8, 12 }), uniform(0.f), 1.f },
+              { bits({ 4, 12 }), uniform(0.f), .85f },
+              { bits({ 2, 6, 10, 14 }), uniform(.5f), .6f },
+              { 0, { 0, .15f, 0, .2f, 0, .15f, 0, .2f, 0, .15f, 0, .2f, 0, .15f, 0, .2f }, .55f },
+              { bits({ 2, 6, 10, 14 }), { 0, .3f, 0, .5f, 0, .3f, 0, .5f, 0, .3f, 0, .5f, 0, .3f, 0, .5f }, .8f } } },
+          0.f, .05f, 2, false },
+        // Hardstyle: hard four-on-the-floor kick, offbeat bass stabs between kicks, offbeat hats.
+        { "Hardstyle", { 150, 160 }, 0.5,
+          { { { bits({ 0, 4, 8, 12 }), uniform(0.f), 1.f },
+              { 0, { 0, 0, 0, 0, .5f, 0, 0, 0, 0, 0, 0, 0, .6f, 0, 0, .15f }, .8f },
+              { bits({ 2, 6, 10, 14 }), uniform(.3f), .6f },
+              { 0, { 0, 0, .15f, 0, 0, 0, .15f, 0, 0, 0, .15f, 0, 0, 0, .2f, .1f }, .65f },
+              { bits({ 2, 6, 10, 14 }), { 0, 0, 0, .3f, 0, 0, 0, .3f, 0, 0, 0, .3f, 0, 0, 0, .3f }, .85f } } },
+          0.f, .1f, 2, false },
+        // Festival / big room EDM: four-on-the-floor, clap on 2 and 4, offbeat hats and
+        // tom-style percussion pickups at the end of each bar.
+        { "Festival", { 124, 130 }, 0.5,
+          { { { bits({ 0, 4, 8, 12 }), uniform(0.f), 1.f },
+              { bits({ 4, 12 }), uniform(0.f), .95f },
+              { bits({ 2, 6, 10, 14 }), uniform(.35f), .6f },
+              { 0, { 0, 0, 0, .15f, 0, 0, 0, .15f, 0, 0, 0, .2f, 0, 0, .35f, .35f }, .75f },
+              {} } },
+          .1f, .1f, 2, false },
     } };
-    return table[static_cast<std::size_t>(std::min(style, Style::Pop))];
+    return table[static_cast<std::size_t>(std::min(style, Style::Festival))];
 }
 
 constexpr std::array<int, 5> kMinorPentatonic { 0, 3, 5, 7, 10 };

@@ -249,6 +249,18 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
         parts_[static_cast<std::size_t>(e.part)].trigger(e.velocity, e.note);
     }
     renderParts(left, right, position, numSamples);
+
+    if (masterGain_ != 1.0f)
+        for (int n = 0; n < numSamples; ++n)
+        {
+            left[n] *= masterGain_;
+            right[n] *= masterGain_;
+        }
+}
+
+void Engine::setMasterGainDb(float db) noexcept
+{
+    masterGain_ = dsp::dbToGain(std::clamp(db, -60.0f, 12.0f));
 }
 
 void loadDefaultKit(Engine& engine)

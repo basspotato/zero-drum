@@ -120,6 +120,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "lock" + juce::String(i), 1 },
                                                               "Lock " + juce::String(kStripNames[i]), false));
 
+    layout.add(floatParam("masterLevel", "Master Level", Range { -24.0f, 6.0f }, zd::Engine::kDefaultMasterDb, "dB"));
+
     // Groove
     layout.add(floatParam("swing", "Swing", Range { 50.0f, 75.0f }, 54.0f, "%"));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "freeRun", 1 }, "Free Run", false));
@@ -189,6 +191,7 @@ void ZeroDrumProcessor::pullParameters() noexcept
     }
 
     engine_.sequencer().pattern().swing = value("swing") * 0.01;
+    engine_.setMasterGainDb(value("masterLevel"));
 }
 
 float ZeroDrumProcessor::stripValue(int part, const char* suffix) const noexcept

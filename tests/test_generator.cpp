@@ -82,6 +82,37 @@ TEST_CASE("Generator: genre anchors are always present")
     }
 }
 
+TEST_CASE("Generator: anchors for hip-hop, dubstep, trance, hardstyle and festival")
+{
+    for (std::uint64_t seed = 1; seed < 20; ++seed)
+    {
+        Pattern hiphop, dubstep, trance, hardstyle, festival;
+        generate({ Style::HipHop, 0.5f, 0.5f, 33, seed, 0 }, hiphop);
+        generate({ Style::Dubstep, 0.5f, 0.8f, 33, seed, 0 }, dubstep);
+        generate({ Style::Trance, 0.5f, 0.5f, 33, seed, 0 }, trance);
+        generate({ Style::Hardstyle, 0.5f, 0.5f, 33, seed, 0 }, hardstyle);
+        generate({ Style::Festival, 0.5f, 0.5f, 33, seed, 0 }, festival);
+        for (int bar = 0; bar < 2; ++bar)
+        {
+            const int b = bar * 16;
+            REQUIRE(hitOn(hiphop, Snare, b + 4));
+            REQUIRE(hitOn(hiphop, Snare, b + 12));
+            REQUIRE(hitOn(dubstep, Snare, b + 8));    // half-time
+            REQUIRE_FALSE(hitOn(dubstep, Snare, b + 4));
+            for (int s : { 0, 4, 8, 12 })
+            {
+                REQUIRE(hitOn(trance, Kick, b + s));
+                REQUIRE(hitOn(hardstyle, Kick, b + s));
+                REQUIRE(hitOn(festival, Kick, b + s));
+            }
+            for (int s : { 2, 6, 10, 14 })
+                REQUIRE(hitOn(trance, Sub, b + s));   // offbeat bass
+        }
+    }
+    CHECK(styleName(Style::Festival) == "Festival");
+    CHECK(static_cast<int>(Style::kCount) == 17);
+}
+
 TEST_CASE("Generator: higher density means more hits on average")
 {
     int sparse = 0, busy = 0;

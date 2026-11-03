@@ -60,6 +60,7 @@ int main(int argc, char** argv)
     auto engine = std::make_unique<zd::Engine>();
     engine->prepare(sampleRate, block);
     zd::loadDefaultKit(*engine);
+    engine->setMasterGainDb(zd::Engine::kDefaultMasterDb);
     engine->sequencer().setSeed(seed);
 
     if (argc > 6)
