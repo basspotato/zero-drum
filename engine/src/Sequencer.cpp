@@ -2,6 +2,7 @@
 
 #include "zd/dsp/Random.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace zd {
@@ -56,16 +57,23 @@ int Sequencer::collect(const Transport& t, double sampleRate, int numSamples,
             const double time = stepTime(lane, k);
             if (time < 0.0)
                 continue;
-
-            const std::int64_t offset = std::llround(time * samplesPerBeat) - blockStart;
-            if (offset < 0 || offset >= numSamples)
-                continue;
             if (!passesProbability(lane, k, s.probability))
                 continue;
-            if (count >= capacity)
-                return count;
 
-            out[count++] = NoteEvent { static_cast<int>(offset), lane, s.velocity, s.note };
+            // Ratchets repeat the hit evenly inside the step (trap and drill hat rolls).
+            const int repeats = std::clamp(s.ratchet, 1, kMaxRatchet);
+            const double spacing = pattern_.stepBeats / repeats;
+            for (int r = 0; r < repeats; ++r)
+            {
+                const double t_r = time + r * spacing;
+                const std::int64_t offset = std::llround(t_r * samplesPerBeat) - blockStart;
+                if (offset < 0 || offset >= numSamples)
+                    continue;
+                if (count >= capacity)
+                    return count;
+                const float velocity = r == 0 ? s.velocity : s.velocity * 0.8f;
+                out[count++] = NoteEvent { static_cast<int>(offset), lane, velocity, s.note };
+            }
         }
     }
     return count;

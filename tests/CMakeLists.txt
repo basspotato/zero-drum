@@ -4,9 +4,11 @@ add_executable(zd_tests
     test_engines.cpp
     test_sequencer.cpp
     test_engine.cpp
-    test_phase1.cpp)
+    test_phase1.cpp
+    test_generator.cpp)
 
-target_link_libraries(zd_tests PRIVATE zd_engine doctest::doctest)
+find_package(Threads REQUIRED)
+target_link_libraries(zd_tests PRIVATE zd_engine doctest::doctest Threads::Threads)
 
 include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
 doctest_discover_tests(zd_tests)

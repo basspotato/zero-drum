@@ -14,6 +14,8 @@ plugin shell and the DSP test harness. See the design doc for the full plan.
 | `engine/include/zd/dsp/` | DSP building blocks: ADAA saturation, ZDF state-variable filter, seeded RNG |
 | `engine/include/zd/engines/` | Voice engines: analog kick, analog snare, sample player, FM percussion, 808 sub |
 | `engine/include/zd/Strip.h` | Per-part channel strip: transient shaper, filter, drive |
+| `engine/include/zd/gen/` | Rule-based beat generator: 12 styles, density, complexity, locks, mutate, fill |
+| `engine/include/zd/PatternIO.h` | Versioned plain-text pattern format (plugin state, future .zdloop) |
 | `engine/include/zd/Sequencer.h` | Sample-accurate step sequencer: swing, micro-timing, probability, polymeter |
 | `plugin/` | JUCE 9 shell: parameters, MIDI, host transport; builds CLAP, VST3, AU, Standalone |
 | `tests/` | doctest suite: block-size null test, aliasing test, determinism, engine behaviour |
@@ -43,6 +45,7 @@ sudo apt-get install libasound2-dev libcurl4-openssl-dev libfontconfig1-dev libf
 ```
 
 Render the demo beat: `./build/zd_render demo.wav 8 94` (bars, BPM).
+Render a generated beat: `./build/zd_render trap.wav 8 0 48000 7 0` (BPM 0 = style tempo, seed 7, style 0 = trap).
 
 ## Playing it
 
@@ -51,6 +54,8 @@ Render the demo beat: `./build/zd_render demo.wav 8 94` (bars, BPM).
 - MIDI: note 36 = kick, 38 = snare, 42 = hat; notes 36 to 51 map to parts 0 to 15.
 - MIDI channel 2 plays the 808 melodically (with glide between overlapping notes).
 - Default kit: kick (part 0), snare (1), hat (2), FM perc (3), 808 (4).
+- Generator bar: pick a style, then **Generate** (new beat), **Mutate** (small changes), **Fill**.
+  Lock parameters keep a lane while you regenerate the rest. The beat is saved with the project.
 
 ## Engineering rules
 

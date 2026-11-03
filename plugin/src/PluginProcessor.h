@@ -1,11 +1,13 @@
 #pragma once
 
 #include "zd/Engine.h"
+#include "zd/gen/Generator.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -45,6 +47,12 @@ public:
 
     juce::AudioProcessorValueTreeState& state() noexcept { return apvts_; }
 
+    /// Beat generation, called from the message thread (editor buttons).
+    void generateBeat();
+    void mutateBeat();
+    void addFillToBeat();
+    juce::String describeBeat() const;
+
     /// Maps a MIDI note to a part: GM kick/snare/closed hat on 36/38/42, else 36..51 -> parts 0..15.
     static int noteToPart(int note) noexcept;
 
@@ -64,6 +72,8 @@ private:
         return 0;
     }
     float stripValue(int part, const char* suffix) const noexcept;
+    std::uint32_t lockMask() const noexcept;
+    void publishPattern(const zd::Pattern& pattern);
     void pullParameters() noexcept;
     float value(const char* id) const noexcept;
 
@@ -72,6 +82,11 @@ private:
     zd::InternalClock freeRunClock_ { 120.0 };
     std::array<zd::NoteEvent, 256> midiEvents_ {};
     std::array<std::array<std::atomic<float>*, kNumStripSuffixes>, kNumStripParts> stripParams_ {};
+    // The pattern as the UI and the saved state see it; the engine gets copies via submitPattern.
+    mutable std::mutex patternMutex_;
+    zd::Pattern uiPattern_;
+    std::uint64_t seed_ = 1;
+
     // Parameter values by ID, built once so the audio thread never constructs juce::Strings.
     std::vector<std::string> paramIds_;
     std::unordered_map<std::string_view, std::atomic<float>*> paramValues_;
