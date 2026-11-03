@@ -11,6 +11,9 @@ namespace zd {
 
 void Part::prepare(double sampleRate, int maxBlockSize)
 {
+    sampleRate_ = sampleRate;
+    duckAttackStep_ = 1.0 / (0.003 * sampleRate); // 3 ms attack ramp
+    cachedDuckRelease_ = -1.0f;
     for (auto& v : kickVoices_) v.prepare(sampleRate);
     for (auto& v : snareVoices_) v.prepare(sampleRate);
     for (auto& v : sampleVoices_) v.prepare(sampleRate);
@@ -103,6 +106,39 @@ void Part::reset() noexcept
     for (auto& v : subVoices_) v.reset();
     strip_.reset();
     lastSubHz_ = 0.0;
+    duckLevel_ = 0.0;
+    duckStart_ = 0.0;
+    duckPhase_ = 0.0;
+    duckAttacking_ = false;
+}
+
+float Part::duckGain() noexcept
+{
+    if (duckAttacking_)
+    {
+        // A raised-cosine ramp to full depth over 3 ms: no step and no corner, so a ducked
+        // 808 bends down smoothly instead of clicking.
+        duckPhase_ += duckAttackStep_;
+        if (duckPhase_ >= 1.0)
+        {
+            duckLevel_ = 1.0;
+            duckAttacking_ = false;
+        }
+        else
+            duckLevel_ = duckStart_ + (1.0 - duckStart_) * (0.5 - 0.5 * std::cos(dsp::kPi * duckPhase_));
+    }
+    else if (duckLevel_ > 0.0)
+    {
+        if (std::abs(mix.duckRelease - cachedDuckRelease_) > 1.0e-7f)
+        {
+            cachedDuckRelease_ = mix.duckRelease;
+            duckReleaseCoef_ = dsp::timeConstantCoefficient(std::max(0.005f, mix.duckRelease), sampleRate_);
+        }
+        duckLevel_ *= duckReleaseCoef_;
+        if (duckLevel_ < 1.0e-6)
+            duckLevel_ = 0.0;
+    }
+    return static_cast<float>(1.0 - std::clamp(mix.duck, 0.0f, 1.0f) * duckLevel_);
 }
 
 void Part::render(float* left, float* right, int numSamples) noexcept
@@ -115,13 +151,22 @@ void Part::render(float* left, float* right, int numSamples) noexcept
     const bool stripNeutral = strip.attack == 0.0f && strip.sustain == 0.0f
                            && strip.filterMode == FilterMode::Off && strip.drive == 0.0f;
     if (stripNeutral && !isActive())
+    {
+        // Keep the duck envelope in step, so the output does not depend on block size.
+        if (duckLevel_ > 0.0 || duckAttacking_)
+            for (int n = 0; n < numSamples; ++n)
+                duckGain();
         return;
+    }
 
     float* mono = scratch_.data();
     std::fill(mono, mono + numSamples, 0.0f);
     for (int i = 0; i < kVoicesPerPart; ++i)
         voice(i).render(mono, numSamples);
     strip_.process(mono, numSamples, strip);
+    if (mix.duck > 0.0f || duckLevel_ > 0.0 || duckAttacking_)
+        for (int n = 0; n < numSamples; ++n)
+            mono[n] *= duckGain();
 
     if (mix.mute)
         return;
@@ -157,6 +202,7 @@ void Engine::reset() noexcept
 {
     for (auto& p : parts_)
         p.reset();
+    clipper_.reset();
 }
 
 void Engine::setSample(int partIndex, SampleDataPtr sample)
@@ -250,6 +296,10 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
         renderParts(left, right, position, e.offset);
         position = e.offset;
         parts_[static_cast<std::size_t>(e.part)].trigger(e.velocity, e.note);
+        if (e.part == kDuckSourcePart)
+            for (int p = 0; p < kMaxParts; ++p)
+                if (p != kDuckSourcePart && parts_[static_cast<std::size_t>(p)].mix.duck > 0.0f)
+                    parts_[static_cast<std::size_t>(p)].duckTrigger();
     }
     renderParts(left, right, position, numSamples);
 
@@ -259,6 +309,23 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
             left[n] *= masterGain_;
             right[n] *= masterGain_;
         }
+    if (masterStage_)
+        clipper_.process(left, right, numSamples);
+}
+
+void Engine::setMasterStage(bool enabled) noexcept
+{
+    if (enabled != masterStage_)
+        clipper_.reset();
+    masterStage_ = enabled;
+}
+
+void Engine::setMasterClip(bool clipOn, float driveDb, float ceilingDb) noexcept
+{
+    masterClip_ = { clipOn, driveDb, ceilingDb };
+    clipper_.setEnabled(clipOn);
+    clipper_.setDriveDb(driveDb);
+    clipper_.setCeilingDb(ceilingDb);
 }
 
 void Engine::setMasterGainDb(float db) noexcept
