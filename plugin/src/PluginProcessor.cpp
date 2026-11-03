@@ -128,6 +128,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     }
     layout.add(floatParam("genDensity", "Density", Range { 0.0f, 1.0f }, 0.5f));
     layout.add(floatParam("genComplexity", "Complexity", Range { 0.0f, 1.0f }, 0.5f));
+    layout.add(floatParam("genGroove", "Groove", Range { 0.0f, 1.0f }, 1.0f));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID { "genRoot", 1 }, "808 Root Note", 24, 47, 33));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "genKit", 1 }, "Load Style Kit", true));
     for (int i = 0; i < kNumStripParts; ++i)
@@ -524,6 +525,7 @@ void ZeroDrumProcessor::generateBeat()
     p.style = static_cast<zd::gen::Style>(static_cast<int>(value("genStyle")));
     p.density = value("genDensity");
     p.complexity = value("genComplexity");
+    p.groove = value("genGroove");
     p.lockMask = lockMask();
     if (value("genKit") > 0.5f)
     {
