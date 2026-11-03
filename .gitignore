@@ -1,0 +1,9 @@
+build*/
+cmake-build-*/
+.cache/
+.vs/
+.vscode/
+.idea/
+*.wav
+.DS_Store
+compile_commands.json
