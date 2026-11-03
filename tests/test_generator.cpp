@@ -7,6 +7,7 @@
 #include "zd/gen/Generator.h"
 
 #include <array>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -109,7 +110,7 @@ TEST_CASE("Generator: anchors for hip-hop, dubstep, trance, hardstyle and festiv
                 REQUIRE(hitOn(trance, Sub, b + s));   // offbeat bass
         }
     }
-    CHECK(styleName(Style::Festival) == "Festival");
+    CHECK(std::string(styleName(Style::Festival)) == "Festival"); // MSVC: doctest cannot print string_view
     CHECK(static_cast<int>(Style::kCount) == 17);
 }
 
