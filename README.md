@@ -70,6 +70,9 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
   **Clipper Drive** for loudness and punch and **Clipper Ceiling** (default -1 dBFS). The plugin
   reports a fixed 64-sample latency (1.3 ms at 48 kHz) whether the clipper is on or off, so the
   host's delay compensation never changes.
+- **Sidechain**: every kick ducks the 808 (**808 Sidechain**) and optionally the perc
+  (**Perc Sidechain**), with a 3 ms click-free attack and **Sidechain Release**. Style kits set
+  it: a short duck for trap-family styles, a full pump for house, trance and festival.
 - **Export...**: pick a folder and get a timestamped folder with `mix.wav`, `parts/` (one WAV per
   part), `midi/` (one MIDI file per part plus `all-parts.mid`) and `pattern.zdpattern`.
   The part WAVs are rendered one at a time, before the master clipper, so they sum exactly to

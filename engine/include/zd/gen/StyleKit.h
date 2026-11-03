@@ -24,6 +24,10 @@ struct StyleKit
     /// Kick body pitch in semitones above the 808 root (0 = unison, 7 = fifth, 12 = octave):
     /// the kick follows the key, so kick and 808 never beat against each other.
     int kickInterval = 0;
+    /// Sidechain under the kick: 808 and perc duck depth (0..1) and release (seconds).
+    float subDuck = 0.0f;
+    float percDuck = 0.0f;
+    float duckRelease = 0.12f;
 };
 
 StyleKit styleKit(Style style) noexcept;

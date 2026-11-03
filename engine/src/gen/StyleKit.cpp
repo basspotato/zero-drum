@@ -101,6 +101,32 @@ StripParams strip(const StripRow& r) noexcept
     return p;
 }
 
+// Sidechain per style, in Style order: 808 duck, perc duck, release ms. Four-on-the-floor
+// styles pump; trap-family styles take a short duck so kick and 808 don't stack on the hit.
+struct DuckRow
+{
+    float sub, perc, releaseMs;
+};
+constexpr std::array<DuckRow, static_cast<std::size_t>(Style::kCount)> kDucks { {
+    { 0.50f, 0.0f, 80 },  // Trap
+    { 0.50f, 0.0f, 80 },  // Drill
+    { 0.30f, 0.0f, 100 }, // Boom bap
+    { 0.70f, 0.2f, 160 }, // House
+    { 0.70f, 0.2f, 140 }, // Techno
+    { 0.60f, 0.0f, 120 }, // UK garage
+    { 0.50f, 0.0f, 90 },  // Drum and bass
+    { 0.40f, 0.0f, 100 }, // Afrobeats
+    { 0.40f, 0.4f, 120 }, // Amapiano (perc is the log drum)
+    { 0.40f, 0.0f, 90 },  // Jersey club
+    { 0.40f, 0.0f, 100 }, // Reggaeton
+    { 0.40f, 0.0f, 100 }, // Pop
+    { 0.40f, 0.0f, 90 },  // Hip-hop
+    { 0.60f, 0.0f, 120 }, // Dubstep
+    { 0.80f, 0.3f, 180 }, // Trance
+    { 0.00f, 0.3f, 150 }, // Hardstyle (no 808)
+    { 0.80f, 0.3f, 180 }, // Festival
+} };
+
 } // namespace
 
 StyleKit styleKit(Style style) noexcept
@@ -149,6 +175,10 @@ StyleKit styleKit(Style style) noexcept
     }
     k.levelDb = { r.lk + r.trimDb, r.ls + r.trimDb, r.lh + r.trimDb, r.lp + r.trimDb, r.lb + r.trimDb };
     k.rootNote = r.root;
+    const DuckRow& d = kDucks[static_cast<std::size_t>(index)];
+    k.subDuck = d.sub;
+    k.percDuck = d.perc;
+    k.duckRelease = d.releaseMs * 0.001f;
     k.kickInterval = r.kInterval;
     return k;
 }
@@ -173,11 +203,17 @@ void applyKit(const StyleKit& kit, Engine& engine, int rootNote, std::uint32_t s
     if (!skip(2))
         engine.part(2).sampleParams = kit.hat;
     if (!skip(3))
+    {
         engine.part(3).fm = kit.perc;
+        engine.part(3).mix.duck = kit.percDuck;
+        engine.part(3).mix.duckRelease = kit.duckRelease;
+    }
     if (!skip(4))
     {
         engine.part(4).sub = kit.sub;
         engine.part(4).sub.tuneHz = static_cast<float>(noteToHz(rootNote));
+        engine.part(4).mix.duck = kit.subDuck;
+        engine.part(4).mix.duckRelease = kit.duckRelease;
     }
     for (int i = 0; i < 5; ++i)
         if (!skip(i))

@@ -125,6 +125,8 @@ TEST_CASE("Master stage: output is bit-identical for any block size")
         loadDefaultKit(*e);
         e->setMasterStage(true);
         e->setMasterClip(true, 9.0f, -1.0f);
+        e->part(4).mix.duck = 0.8f; // and the sidechain
+        e->part(3).mix.duck = 0.5f;
         gen::generate({ gen::Style::Dubstep, 0.8f, 0.8f, 29, 3, 0 }, e->sequencer().pattern());
         std::vector<float> l(48000), r(48000);
         InternalClock clock(140.0);
@@ -184,4 +186,51 @@ TEST_CASE("Export with the master stage: latency compensated, part files sum to 
     CHECK(clipped->masterClip().driveDb == 6.0f);
     for (const auto& d : { dirPlain, dirDelay, dirClip })
         std::filesystem::remove_all(d);
+}
+
+TEST_CASE("Sidechain: the kick ducks the 808 on its exact sample and the 808 recovers")
+{
+    auto render = [](float duck) {
+        auto e = std::make_unique<Engine>();
+        e->prepare(kSr, 512);
+        loadDefaultKit(*e);
+        e->part(4).mix.duck = duck;
+        e->part(4).mix.duckRelease = 0.1f;
+        e->part(4).sub.decay = 6.0f;
+        e->part(0).mix.mute = true; // listen to the 808 only; the kick still drives the duck
+        std::vector<float> l(48000), r(48000);
+        // 808 at 0, kick at 0.5 s.
+        const NoteEvent sub { 0, 4, 1.0f, 33 };
+        e->process(Transport { false, 120.0, 0.0 }, &sub, 1, l.data(), r.data(), 512);
+        for (int pos = 512; pos < 48000; pos += 512)
+        {
+            const int n = std::min(512, 48000 - pos);
+            const NoteEvent kick { 24000 - pos, 0, 1.0f, -1 };
+            const bool hit = 24000 >= pos && 24000 < pos + n;
+            e->process(Transport { false, 120.0, 0.0 }, hit ? &kick : nullptr, hit ? 1 : 0, l.data() + pos, r.data() + pos, n);
+        }
+        return l;
+    };
+    auto rms = [](const std::vector<float>& x, int from, int to) {
+        double s = 0.0;
+        for (int i = from; i < to; ++i)
+            s += static_cast<double>(x[static_cast<std::size_t>(i)]) * x[static_cast<std::size_t>(i)];
+        return std::sqrt(s / (to - from));
+    };
+    const auto dry = render(0.0f), ducked = render(0.75f);
+    for (int i = 0; i < 24000; ++i)
+        REQUIRE(dry[static_cast<std::size_t>(i)] == ducked[static_cast<std::size_t>(i)]); // untouched before the kick
+    const double depth = test::toDb(rms(ducked, 24240, 24720) / rms(dry, 24240, 24720)); // 5..15 ms after
+    CHECK(depth < -9.0);  // 0.75 depth = -12 dB at the bottom
+    CHECK(depth > -13.0);
+    const double later = test::toDb(rms(ducked, 47000, 47960) / rms(dry, 47000, 47960)); // 480 ms later
+    CHECK(later > -0.5);
+    // No click: sample-to-sample change right after the kick stays close to the dry 808's.
+    double jump = 0.0;
+    for (int i = 24001; i < 24100; ++i)
+        jump = std::max(jump, static_cast<double>(std::abs(ducked[static_cast<std::size_t>(i)] - ducked[static_cast<std::size_t>(i - 1)])));
+    double dryJump = 0.0;
+    for (int i = 24001; i < 24100; ++i)
+        dryJump = std::max(dryJump, static_cast<double>(std::abs(dry[static_cast<std::size_t>(i)] - dry[static_cast<std::size_t>(i - 1)])));
+    CHECK(jump <= dryJump * 1.5); // an instant duck would jump about 100x more
 }

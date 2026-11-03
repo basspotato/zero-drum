@@ -23,7 +23,14 @@ struct PartMix
     float pan = 0.0f;   ///< -1 left .. 1 right
     bool mono = false;  ///< true: a new hit chokes the previous one (typical for kicks and 808s)
     bool mute = false;  ///< still rendered (state stays in step), just not mixed
+    /// Sidechain: how far each kick (part 0) ducks this part, 0 = not at all, 1 = to silence.
+    /// A 3 ms raised-cosine attack keeps sustained sounds (808s) click-free; then it recovers over duckRelease.
+    float duck = 0.0f;
+    float duckRelease = 0.12f; ///< seconds, time constant of the recovery
 };
+
+/// The part whose hits drive the sidechain.
+inline constexpr int kDuckSourcePart = 0;
 
 /// One of the 16 drum parts: an engine type, its parameters, its voices and its mix.
 class Part
@@ -35,6 +42,13 @@ public:
     void render(float* left, float* right, int numSamples) noexcept;
     bool isActive() const noexcept;
     void reset() noexcept;
+    /// Starts a sidechain duck now (sample-accurate: the engine calls it at the kick's offset).
+    void duckTrigger() noexcept
+    {
+        duckAttacking_ = true;
+        duckStart_ = duckLevel_;
+        duckPhase_ = 0.0;
+    }
 
     EngineType type = EngineType::Off;
     KickParams kick;
@@ -59,6 +73,17 @@ private:
     std::vector<float> scratch_;
     unsigned ageCounter_ = 0;
     double lastSubHz_ = 0.0;
+
+    /// Advances the duck envelope one sample and returns the gain to apply.
+    float duckGain() noexcept;
+    double sampleRate_ = 48000.0;
+    double duckLevel_ = 0.0;   ///< 0 = no ducking, 1 = full depth
+    double duckAttackStep_ = 0.01;
+    double duckStart_ = 0.0;
+    double duckPhase_ = 0.0;
+    double duckReleaseCoef_ = 0.0;
+    float cachedDuckRelease_ = -1.0f;
+    bool duckAttacking_ = false;
 };
 
 /// The Zero Drum engine. Framework-free: no JUCE, no OS calls.
