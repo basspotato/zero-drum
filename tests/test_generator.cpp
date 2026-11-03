@@ -5,8 +5,12 @@
 #include "zd/Engine.h"
 #include "zd/PatternIO.h"
 #include "zd/gen/Generator.h"
+#include "zd/gen/StyleKit.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -257,4 +261,65 @@ TEST_CASE("Engine: submitted patterns reach the audio thread, also under content
     e->process(clock.next(48000.0, 256), nullptr, 0, l.data(), r.data(), 256);
     CHECK(patternsEqual(e->sequencer().pattern(), last));
     CHECK(zd::test::allFinite(l));
+}
+
+TEST_CASE("Style kits: in range, tuned to the root, and every style renders without clipping")
+{
+    for (int s = 0; s < static_cast<int>(Style::kCount); ++s)
+    {
+        const auto style = static_cast<Style>(s);
+        const StyleKit kit = styleKit(style);
+        CAPTURE(std::string(styleName(style)));
+        CHECK(kit.kick.tuneHz >= 30.0f);
+        CHECK(kit.kick.tuneHz <= 120.0f);
+        CHECK(kit.kick.decay > 0.04f);
+        CHECK(kit.snare.tuneHz >= 100.0f);
+        CHECK(kit.snare.tuneHz <= 400.0f);
+        CHECK(kit.sub.decay >= 0.1f);
+        CHECK(kit.perc.ratio >= 0.25f);
+        for (float db : kit.levelDb)
+            CHECK(db <= 6.0f);
+
+        auto e = std::make_unique<Engine>();
+        e->prepare(48000.0, 512);
+        loadDefaultKit(*e);
+        e->setMasterGainDb(Engine::kDefaultMasterDb);
+        applyKit(kit, *e, kit.rootNote);
+        {
+            // The kick body sits on root + interval in some octave, near the guide's tuning.
+            const double semis = 12.0 * std::log2(e->part(0).kick.tuneHz / noteToHz(kit.rootNote));
+            const int pc = ((static_cast<int>(std::lround(semis)) % 12) + 12) % 12;
+            CHECK(pc == kit.kickInterval % 12);
+            CHECK(std::abs(semis - std::round(semis)) < 1.0e-3);
+            CHECK(std::abs(std::log2(e->part(0).kick.tuneHz / kit.kick.tuneHz)) <= 0.5);
+        }
+        CHECK(kit.rootNote >= 24);
+        CHECK(kit.rootNote <= 47);
+        CHECK(e->part(4).sub.tuneHz == doctest::Approx(noteToHz(kit.rootNote)));
+
+        double peak = 0.0;
+        for (std::uint64_t seed = 1; seed <= 3; ++seed)
+        {
+            GenerateParams p;
+            p.style = style;
+            p.seed = seed;
+            p.density = 0.8f;
+            p.complexity = 0.8f;
+            generate(p, e->sequencer().pattern());
+            e->reset();
+            const auto range = styleTempo(style);
+            InternalClock clock(0.5 * (range.low + range.high));
+            std::vector<float> l(512), r(512);
+            for (int b = 0; b < 48000 * 8 / 512; ++b)
+            {
+                e->process(clock.next(48000.0, 512), nullptr, 0, l.data(), r.data(), 512);
+                peak = std::max({ peak, test::peak(l), test::peak(r) });
+            }
+        }
+        CHECK(peak > 0.1);
+        CHECK(peak < 1.0); // under 0 dBFS before any master clipper exists
+    }
+    CHECK(rootTunedKickHz(29, 7, 65.4f) == doctest::Approx(65.41).epsilon(0.001)); // F1 + fifth = C2
+    CHECK(rootTunedKickHz(31, 7, 65.4f) == doctest::Approx(73.42).epsilon(0.001)); // G1 + fifth = D2
+    CHECK(rootTunedKickHz(33, 0, 50.0f) == doctest::Approx(55.0));
 }

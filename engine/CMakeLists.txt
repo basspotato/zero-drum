@@ -3,6 +3,7 @@ add_library(zd_engine STATIC
     src/Sequencer.cpp
     src/Strip.cpp
     src/gen/Generator.cpp
+    src/gen/StyleKit.cpp
     src/PatternIO.cpp
     src/export/Export.cpp
     src/engines/AnalogKick.cpp

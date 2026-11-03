@@ -57,6 +57,11 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
 - Default kit: kick (part 0), snare (1), hat (2), FM perc (3), 808 (4).
 - Generator bar: pick a style, then **Generate** (new beat), **Mutate** (small changes), **Fill**.
   Lock parameters keep a lane while you regenerate the rest. The beat is saved with the project.
+- **Style kits**: with **Load Style Kit** on (the default), Generate also tunes the five parts for
+  the style (kick, snare, hat, perc, 808 settings, strips and levels) and sets the 808 root to the
+  style's home key. The kick is tuned to a fixed interval above the 808 root, so the two never
+  clash. Locked parts keep their sound. The numbers come from the genre tuning guide, and every
+  style is level-matched to peak around -1.6 dBFS.
 - **Drag MIDI**: drag the **Beat** chip (all lanes) or one lane's chip onto a DAW track to drop
   the pattern as a MIDI clip. Drums use channel 10 with the notes above (36 kick, 38 snare,
   42 hat, 39 perc); the 808 uses channel 2 with its notes, so the clip plays back the same on

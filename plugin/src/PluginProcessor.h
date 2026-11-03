@@ -3,6 +3,7 @@
 #include "zd/Engine.h"
 #include "zd/export/Export.h"
 #include "zd/gen/Generator.h"
+#include "zd/gen/StyleKit.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -89,6 +90,9 @@ private:
     float stripValue(int part, const char* suffix) const noexcept;
     std::uint32_t lockMask() const noexcept;
     void publishPattern(const zd::Pattern& pattern);
+    void setParam(const char* id, float plainValue);
+    /// Loads the style's tuned kit into the parameters, skipping parts in `keepMask`.
+    void loadStyleKit(zd::gen::Style style, int rootNote, std::uint32_t keepMask);
     void pullParameters() noexcept;
     /// Maps the current parameter values onto any engine (the live one or an export copy).
     void applyParameters(zd::Engine& engine) const noexcept;
