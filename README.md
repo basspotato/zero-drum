@@ -46,6 +46,7 @@ sudo apt-get install libasound2-dev libcurl4-openssl-dev libfontconfig1-dev libf
 
 Render the demo beat: `./build/zd_render demo.wav 8 94` (bars, BPM).
 Render a generated beat: `./build/zd_render trap.wav 8 0 48000 7 0` (BPM 0 = style tempo, seed 7, style 0 = trap).
+Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a path ending in `/` is a folder).
 
 ## Playing it
 
@@ -56,6 +57,15 @@ Render a generated beat: `./build/zd_render trap.wav 8 0 48000 7 0` (BPM 0 = sty
 - Default kit: kick (part 0), snare (1), hat (2), FM perc (3), 808 (4).
 - Generator bar: pick a style, then **Generate** (new beat), **Mutate** (small changes), **Fill**.
   Lock parameters keep a lane while you regenerate the rest. The beat is saved with the project.
+- **Drag MIDI**: drag the **Beat** chip (all lanes) or one lane's chip onto a DAW track to drop
+  the pattern as a MIDI clip. Drums use channel 10 with the notes above (36 kick, 38 snare,
+  42 hat, 39 perc); the 808 uses channel 2 with its notes, so the clip plays back the same on
+  Zero Drum or drives any other drum rack or synth.
+- **Export...**: pick a folder and get a timestamped folder with `mix.wav`, `parts/` (one WAV per
+  part), `midi/` (one MIDI file per part plus `all-parts.mid`) and `pattern.zdpattern`.
+  The part WAVs are rendered one at a time and sum exactly to the mix, so there is never any
+  stem separation. Files loop seamlessly: decays from the end of the loop carry into its start.
+  Tempo is the host's (or the Free Run tempo).
 
 ## Engineering rules
 

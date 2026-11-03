@@ -137,9 +137,9 @@ float ZeroDrumProcessor::value(const char* id) const noexcept
     return it != paramValues_.end() ? it->second->load(std::memory_order_relaxed) : 0.0f;
 }
 
-void ZeroDrumProcessor::pullParameters() noexcept
+void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
 {
-    auto& kick = engine_.part(0);
+    auto& kick = engine.part(0);
     kick.kick.tuneHz = value("kickTune");
     kick.kick.pitchAmount = value("kickSweep");
     kick.kick.pitchDecay = value("kickSweepTime") * 0.001f;
@@ -148,7 +148,7 @@ void ZeroDrumProcessor::pullParameters() noexcept
     kick.kick.drive = value("kickDrive");
     kick.mix.gainDb = value("kickLevel");
 
-    auto& snare = engine_.part(1);
+    auto& snare = engine.part(1);
     snare.snare.tuneHz = value("snareTune");
     snare.snare.toneDecay = value("snareToneDecay") * 0.001f;
     snare.snare.noiseDecay = value("snareNoiseDecay") * 0.001f;
@@ -157,12 +157,12 @@ void ZeroDrumProcessor::pullParameters() noexcept
     snare.snare.drive = value("snareDrive");
     snare.mix.gainDb = value("snareLevel");
 
-    auto& hat = engine_.part(2);
+    auto& hat = engine.part(2);
     hat.sampleParams.pitchSemitones = value("hatPitch");
     hat.sampleParams.decay = value("hatDecay") * 0.001f;
     hat.mix.gainDb = value("hatLevel");
 
-    auto& perc = engine_.part(3);
+    auto& perc = engine.part(3);
     perc.fm.tuneHz = value("fmTune");
     perc.fm.ratio = value("fmRatio");
     perc.fm.index = value("fmIndex");
@@ -171,7 +171,7 @@ void ZeroDrumProcessor::pullParameters() noexcept
     perc.fm.feedback = value("fmFeedback");
     perc.mix.gainDb = value("fmLevel");
 
-    auto& sub = engine_.part(4);
+    auto& sub = engine.part(4);
     sub.sub.tuneHz = value("subTune");
     sub.sub.decay = value("subDecay") * 0.001f;
     sub.sub.glide = value("subGlide") * 0.001f;
@@ -181,7 +181,7 @@ void ZeroDrumProcessor::pullParameters() noexcept
 
     for (int i = 0; i < kNumStripParts; ++i)
     {
-        auto& st = engine_.part(i).strip;
+        auto& st = engine.part(i).strip;
         st.attack = stripValue(i, "Attack");
         st.sustain = stripValue(i, "Sustain");
         st.filterMode = static_cast<zd::FilterMode>(static_cast<int>(stripValue(i, "FilterMode")));
@@ -190,8 +190,13 @@ void ZeroDrumProcessor::pullParameters() noexcept
         st.drive = stripValue(i, "StripDrive");
     }
 
-    engine_.sequencer().pattern().swing = value("swing") * 0.01;
-    engine_.setMasterGainDb(value("masterLevel"));
+    engine.sequencer().pattern().swing = value("swing") * 0.01;
+    engine.setMasterGainDb(value("masterLevel"));
+}
+
+void ZeroDrumProcessor::pullParameters() noexcept
+{
+    applyParameters(engine_);
 }
 
 float ZeroDrumProcessor::stripValue(int part, const char* suffix) const noexcept
@@ -264,6 +269,7 @@ void ZeroDrumProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         {
             transport.playing = pos->getIsPlaying();
             transport.bpm = pos->getBpm().orFallback(120.0);
+            hostBpm_.store(transport.bpm, std::memory_order_relaxed);
             transport.ppqPosition = pos->getPpqPosition().orFallback(0.0);
         }
     }
@@ -271,6 +277,93 @@ void ZeroDrumProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     float* left = buffer.getWritePointer(0);
     float* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : left;
     engine_.process(transport, midiEvents_.data(), numEvents, left, right, numSamples);
+}
+
+// ------------------------------------------------------------------------------- export
+
+namespace {
+
+/// Keeps non-ASCII paths intact (Windows user folders often have them).
+std::filesystem::path toPath(const juce::File& file)
+{
+#if JUCE_WINDOWS
+    return std::filesystem::path(file.getFullPathName().toWideCharPointer());
+#else
+    return std::filesystem::path(file.getFullPathName().toStdString());
+#endif
+}
+
+} // namespace
+
+double ZeroDrumProcessor::exportBpm() const noexcept
+{
+    const double bpm = value("freeRun") > 0.5f ? static_cast<double>(value("freeRunBpm")) : hostBpm_.load(std::memory_order_relaxed);
+    return juce::jlimit(20.0, 400.0, bpm);
+}
+
+zd::Pattern ZeroDrumProcessor::patternSnapshot() const
+{
+    std::lock_guard lock(patternMutex_);
+    zd::Pattern p = uiPattern_;
+    p.swing = value("swing") * 0.01;
+    return p;
+}
+
+std::array<std::string, zd::kMaxParts> ZeroDrumProcessor::partNames() const
+{
+    std::array<std::string, zd::kMaxParts> names {};
+    for (int i = 0; i < kNumStripParts; ++i)
+        names[static_cast<std::size_t>(i)] = kStripNames[i];
+    return names;
+}
+
+void ZeroDrumProcessor::exportLoopAsync(const juce::File& directory, ExportCallback done)
+{
+    if (exporting_.exchange(true))
+        return;
+
+    // Everything the job needs is captured now, on the message thread.
+    auto engine = std::make_shared<zd::Engine>();
+    const double sr = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
+    engine->prepare(sr, 512);
+    zd::loadDefaultKit(*engine);
+    engine->sequencer().pattern() = patternSnapshot();
+    applyParameters(*engine);
+
+    zd::exporting::ExportOptions options;
+    options.bpm = exportBpm();
+    options.bars = zd::exporting::loopBars(engine->sequencer().pattern());
+    options.partNames = partNames();
+    const auto path = toPath(directory);
+
+    exportPool_.addJob([this, engine, options, path, done = std::move(done)] {
+        auto result = zd::exporting::exportLoop(*engine, options, path);
+        exporting_.store(false);
+        juce::MessageManager::callAsync([result = std::move(result), done] {
+            if (done)
+                done(result);
+        });
+    });
+}
+
+juce::File ZeroDrumProcessor::writeMidiClip(int lane) const
+{
+    zd::Sequencer sequencer;
+    sequencer.pattern() = patternSnapshot();
+    const int bars = zd::exporting::loopBars(sequencer.pattern());
+    const auto names = partNames();
+    const auto tracks = zd::exporting::patternTracks(sequencer, bars, names, 1u << 4, lane);
+    if (tracks.empty())
+        return {};
+
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Zero Drum MIDI");
+    if (!dir.createDirectory())
+        return {};
+    const juce::String which = lane >= 0 ? juce::String(names[static_cast<std::size_t>(lane)]) : juce::String("Beat");
+    const auto file = dir.getChildFile("Zero Drum " + which + " " + juce::String(juce::roundToInt(exportBpm())) + " BPM.mid");
+    if (!zd::exporting::writeMidi(toPath(file), tracks, exportBpm()))
+        return {};
+    return file;
 }
 
 juce::AudioProcessorEditor* ZeroDrumProcessor::createEditor()
