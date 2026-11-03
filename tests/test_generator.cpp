@@ -323,3 +323,91 @@ TEST_CASE("Style kits: in range, tuned to the root, and every style renders with
     CHECK(rootTunedKickHz(31, 7, 65.4f) == doctest::Approx(73.42).epsilon(0.001)); // G1 + fifth = D2
     CHECK(rootTunedKickHz(33, 0, 50.0f) == doctest::Approx(55.0));
 }
+
+TEST_CASE("Groove: zero groove is on the grid, and groove never changes which steps play")
+{
+    for (int st = 0; st < static_cast<int>(Style::kCount); ++st)
+    {
+        GenerateParams p;
+        p.style = static_cast<Style>(st);
+        p.complexity = 0.8f;
+        p.seed = 11;
+        p.groove = 0.0f;
+        Pattern grid;
+        generate(p, grid);
+        p.groove = 1.0f;
+        Pattern felt;
+        generate(p, felt);
+
+        CHECK(grid.swing == 0.5);
+        for (int l = 0; l < kNumRoles; ++l)
+            for (int i = 0; i < grid.lanes[static_cast<std::size_t>(l)].length; ++i)
+            {
+                const Step& a = grid.lanes[static_cast<std::size_t>(l)].steps[static_cast<std::size_t>(i)];
+                const Step& b = felt.lanes[static_cast<std::size_t>(l)].steps[static_cast<std::size_t>(i)];
+                CHECK(a.on == b.on);
+                CHECK(a.ratchet == b.ratchet);
+                CHECK(a.microOffset == 0.0f);
+                CHECK(std::abs(b.microOffset) <= 0.5f);
+                CHECK(b.velocity <= 1.0f);
+            }
+    }
+}
+
+TEST_CASE("Groove: boom bap snare lays back and the kick pushes; the 808 stays on the kick")
+{
+    GenerateParams p;
+    p.style = Style::BoomBap;
+    p.seed = 5;
+    Pattern pat;
+    generate(p, pat);
+    for (int bar = 0; bar < 2; ++bar)
+    {
+        CHECK(pat.lanes[Snare].steps[static_cast<std::size_t>(bar * 16 + 4)].microOffset > 0.05f);
+        CHECK(pat.lanes[Snare].steps[static_cast<std::size_t>(bar * 16 + 12)].microOffset > 0.05f);
+        CHECK(pat.lanes[Kick].steps[static_cast<std::size_t>(bar * 16)].microOffset < 0.0f);
+    }
+
+    p.style = Style::Trap;
+    generate(p, pat);
+    for (int i = 0; i < pat.lanes[Sub].length; ++i)
+    {
+        const Step& s = pat.lanes[Sub].steps[static_cast<std::size_t>(i)];
+        if (s.on)
+            CHECK(s.microOffset == pat.lanes[Kick].steps[static_cast<std::size_t>(i)].microOffset);
+    }
+    CHECK(pat.lanes[Kick].steps[0].microOffset == 0.0f); // trap stays on the grid
+}
+
+TEST_CASE("Groove: house accents the offbeat hat, trap accents the downbeat")
+{
+    auto meanVel = [](const Lane& lane, int pos) {
+        double sum = 0.0;
+        int n = 0;
+        for (int i = 0; i < lane.length; ++i)
+            if (i % 4 == pos && lane.steps[static_cast<std::size_t>(i)].on)
+            {
+                sum += lane.steps[static_cast<std::size_t>(i)].velocity;
+                ++n;
+            }
+        return n > 0 ? sum / n : 0.0;
+    };
+    double houseOn = 0, houseOff = 0, trapOn = 0, trapOff = 0;
+    for (std::uint64_t seed = 1; seed <= 20; ++seed)
+    {
+        GenerateParams p;
+        p.seed = seed;
+        p.density = 0.8f;
+        Pattern pat;
+        p.style = Style::House;
+        generate(p, pat);
+        houseOn += meanVel(pat.lanes[Hat], 0);
+        houseOff += meanVel(pat.lanes[Hat], 2);
+        p.style = Style::Trap;
+        generate(p, pat);
+        trapOn += meanVel(pat.lanes[Hat], 0);
+        trapOff += meanVel(pat.lanes[Hat], 2);
+    }
+    CHECK(houseOff > houseOn * 1.2);
+    CHECK(trapOn > trapOff * 1.05);
+}

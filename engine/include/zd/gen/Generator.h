@@ -48,6 +48,7 @@ struct GenerateParams
     std::uint64_t seed = 1;
     /// Lanes that must not change. Bit i locks lane i.
     std::uint32_t lockMask = 0;
+    float groove = 1.0f;      ///< 0 = on the grid, flat accents, straight; 1 = the style's full feel
 };
 
 /// Rule-based beat generator.

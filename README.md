@@ -14,7 +14,7 @@ plugin shell and the DSP test harness. See the design doc for the full plan.
 | `engine/include/zd/dsp/` | DSP building blocks: ADAA saturation, ZDF state-variable filter, seeded RNG |
 | `engine/include/zd/engines/` | Voice engines: analog kick, analog snare, sample player, FM percussion, 808 sub |
 | `engine/include/zd/Strip.h` | Per-part channel strip: transient shaper, filter, drive |
-| `engine/include/zd/gen/` | Rule-based beat generator: 17 styles, density, complexity, locks, mutate, fill |
+| `engine/include/zd/gen/` | Rule-based beat generator: 17 styles, density, complexity, groove (per-style timing and accents), locks, mutate, fill |
 | `engine/include/zd/PatternIO.h` | Versioned plain-text pattern format (plugin state, future .zdloop) |
 | `engine/include/zd/Sequencer.h` | Sample-accurate step sequencer: swing, micro-timing, probability, polymeter |
 | `plugin/` | JUCE 9 shell: parameters, MIDI, host transport; builds CLAP, VST3, AU, Standalone |
@@ -57,6 +57,12 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
 - Default kit: kick (part 0), snare (1), hat (2), FM perc (3), 808 (4).
 - Generator bar: pick a style, then **Generate** (new beat), **Mutate** (small changes), **Fill**.
   Lock parameters keep a lane while you regenerate the rest. The beat is saved with the project.
+- **Groove**: each style has its own pocket on top of its swing. Boom bap pushes the kick and
+  lays the snare back, house leans the offbeat hat forward and accents it, garage and amapiano
+  drag the 16th pickups, and the EDM styles stay locked to the grid. Hats and perc get a small
+  seeded human spread, the 808 stays locked to the kick, and snare ghost notes use the style's
+  ghost velocity. **Groove** 0 gives a straight grid with flat accents; 1 (default) is the full feel.
+  Groove only moves timing and dynamics, never which steps play.
 - **Style kits**: with **Load Style Kit** on (the default), Generate also tunes the five parts for
   the style (kick, snare, hat, perc, 808 settings, strips and levels) and sets the 808 root to the
   style's home key. The kick is tuned to a fixed interval above the 808 root, so the two never

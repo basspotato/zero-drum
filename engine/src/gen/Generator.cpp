@@ -19,7 +19,6 @@ struct LaneDef
     std::uint16_t anchors = 0; ///< bit i = always hit on step i
     Weights weights {};        ///< chance of an extra hit on each step at density 0.5
     float velocity = 0.9f;     ///< base velocity of non-anchor hits
-    float microOffset = 0.0f;  ///< style feel, as a fraction of a step (+ = late)
 };
 
 struct StyleDef
@@ -69,7 +68,7 @@ const StyleDef& def(Style style) noexcept
           .15f, .5f, 3, true },
         { "Boom bap", { 84, 96 }, 0.6,
           { { { bits({ 0 }), { 0, 0, .1f, .2f, 0, 0, 0, .45f, 0, .2f, .6f, 0, 0, 0, .2f, .1f }, .9f },
-              { bits({ 4, 12 }), uniform(0.f), .9f, 0.06f },
+              { bits({ 4, 12 }), uniform(0.f), .9f },
               { bits({ 0, 2, 4, 6, 8, 10, 12, 14 }), uniform(.15f), .65f },
               { 0, { 0, 0, 0, 0, 0, 0, .1f, 0, 0, 0, 0, 0, 0, 0, .15f, 0 }, .6f },
               {} } },
@@ -140,7 +139,7 @@ const StyleDef& def(Style style) noexcept
         // Modern hip-hop: laid-back kick, 2 and 4 backbeat, 8th hats with 16th pickups, 808 under the kick.
         { "Hip-hop", { 88, 100 }, 0.55,
           { { { bits({ 0 }), { 0, 0, .15f, .25f, 0, 0, .2f, .45f, 0, .15f, .55f, .1f, 0, 0, .25f, .1f }, .9f },
-              { bits({ 4, 12 }), uniform(0.f), .9f, 0.03f },
+              { bits({ 4, 12 }), uniform(0.f), .9f },
               { bits({ 0, 2, 4, 6, 8, 10, 12, 14 }), uniform(.25f), .6f },
               { 0, { 0, 0, 0, .1f, 0, 0, .1f, 0, 0, 0, 0, .1f, 0, 0, .15f, 0 }, .6f },
               {} } },
@@ -182,6 +181,91 @@ const StyleDef& def(Style style) noexcept
     return table[static_cast<std::size_t>(std::min(style, Style::Festival))];
 }
 
+/// Feel of one lane, indexed by the step's position inside its beat: 0 = on the beat,
+/// 1 = the "e", 2 = the "and", 3 = the "a".
+struct LaneGroove
+{
+    std::array<float, 4> timing { 0, 0, 0, 0 }; ///< fraction of a step, + = late
+    std::array<float, 4> accent { 1, 1, 1, 1 }; ///< velocity multiplier
+};
+
+/// The groove table: how each style sits against the grid, on top of its swing.
+/// Hip-hop pulls the snare late and pushes the kick, house leans on the offbeat hat,
+/// garage and amapiano drag the 16th pickups, the EDM styles stay locked to the grid.
+struct GrooveDef
+{
+    std::array<LaneGroove, kNumRoles> lanes;
+    float ghostVelocity; ///< snare ghost note velocity
+    float jitter;        ///< random timing spread on hats and perc, fraction of a step
+};
+
+constexpr std::array<float, 4> kOnTheGrid { 0, 0, 0, 0 };
+constexpr std::array<float, 4> kFlat { 1, 1, 1, 1 };
+constexpr std::array<float, 4> kHatDown { 1.0f, .72f, .86f, .72f };   ///< downbeat-led 8ths and 16ths
+constexpr std::array<float, 4> kHatOff { .72f, .6f, 1.0f, .6f };     ///< offbeat open hat leads
+constexpr std::array<float, 4> kKick16 { 1.0f, .88f, .94f, .88f };   ///< 16th kick pickups a touch softer
+
+const GrooveDef& groove(Style style) noexcept
+{
+    static const std::array<GrooveDef, static_cast<std::size_t>(Style::kCount)> table { {
+        // Trap: programmed and tight; the feel is in hat accents and rolls, not timing.
+        { { { { kOnTheGrid, kKick16 }, { kOnTheGrid, kFlat }, { kOnTheGrid, { 1.0f, .74f, .9f, .74f } },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .25f, .02f },
+        // Drill: snare a hair late, sliding hats.
+        { { { { kOnTheGrid, kKick16 }, { { .02f, .02f, .02f, .02f }, kFlat }, { kOnTheGrid, kHatDown },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .3f, .03f },
+        // Boom bap: kick pushes, snare lays back, hats drag the 16ths. Loose hands.
+        { { { { { -.03f, -.02f, -.03f, -.02f }, kKick16 }, { { .08f, .06f, .08f, .06f }, kFlat },
+              { { 0, .03f, 0, .03f }, { 1.0f, .6f, .85f, .6f } }, { { 0, .03f, .02f, .03f }, kFlat },
+              { kOnTheGrid, kFlat } } }, .35f, .06f },
+        // House: clap slightly late, offbeat hat leans forward and carries the accent.
+        { { { { kOnTheGrid, kFlat }, { { .02f, .02f, .02f, .02f }, kFlat }, { { 0, 0, -.03f, 0 }, kHatOff },
+              { { 0, .02f, 0, .02f }, { 1.0f, .85f, .95f, .85f } }, { kOnTheGrid, kFlat } } }, .3f, .03f },
+        // Techno: machine tight, accent on the offbeat hat and the perc 16ths.
+        { { { { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat }, { kOnTheGrid, kHatOff },
+              { kOnTheGrid, { .8f, 1.0f, .8f, 1.0f } }, { kOnTheGrid, kFlat } } }, .3f, .015f },
+        // UK garage: shuffled 16ths dragged late, snare a touch behind.
+        { { { { kOnTheGrid, kKick16 }, { { .02f, .02f, .02f, .02f }, kFlat },
+              { { 0, .04f, 0, .04f }, { .85f, .65f, 1.0f, .7f } }, { { 0, .04f, 0, .04f }, kFlat },
+              { kOnTheGrid, kFlat } } }, .3f, .04f },
+        // Drum and bass: tight snare, ghosted breaks, hats dragged slightly.
+        { { { { kOnTheGrid, kKick16 }, { kOnTheGrid, kFlat }, { { 0, .03f, 0, .03f }, { 1.0f, .6f, .85f, .65f } },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .25f, .03f },
+        // Afrobeats: perc pushed into the pocket, rim slightly late, shaker accents.
+        { { { { kOnTheGrid, kKick16 }, { { .02f, .02f, .02f, .02f }, kFlat }, { kOnTheGrid, { 1.0f, .65f, .85f, .7f } },
+              { { 0, .04f, .02f, .04f }, { 1.0f, .8f, .9f, .85f } }, { kOnTheGrid, kFlat } } }, .3f, .05f },
+        // Amapiano: shaker 16ths with the "and" accented, log drum dragged behind the beat.
+        { { { { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat }, { { 0, .03f, 0, .03f }, { .7f, .55f, 1.0f, .6f } },
+              { { 0, .03f, 0, .03f }, kFlat }, { { .03f, .03f, .03f, .03f }, kFlat } } }, .3f, .04f },
+        // Jersey club: tight and bouncy.
+        { { { { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat }, { kOnTheGrid, { 1.0f, .7f, .9f, .7f } },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .3f, .02f },
+        // Reggaeton: dembow on the grid.
+        { { { { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat }, { kOnTheGrid, { 1.0f, .65f, .85f, .65f } },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .3f, .02f },
+        // Pop: clean, light accents.
+        { { { { kOnTheGrid, kKick16 }, { kOnTheGrid, kFlat }, { kOnTheGrid, kHatDown },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .28f, .02f },
+        // Hip-hop: a milder boom bap pocket.
+        { { { { { -.02f, -.01f, -.02f, -.01f }, kKick16 }, { { .05f, .04f, .05f, .04f }, kFlat },
+              { { 0, .02f, 0, .02f }, { 1.0f, .65f, .85f, .65f } }, { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } },
+          .32f, .04f },
+        // Dubstep: tight; the weight comes from the half-time snare.
+        { { { { kOnTheGrid, kKick16 }, { kOnTheGrid, kFlat }, { kOnTheGrid, kHatDown },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .25f, .02f },
+        // Trance: on the grid, offbeat hat leads.
+        { { { { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat }, { kOnTheGrid, kHatOff },
+              { kOnTheGrid, { .8f, .9f, .8f, .9f } }, { kOnTheGrid, kFlat } } }, .3f, .01f },
+        // Hardstyle: on the grid, offbeat hat leads.
+        { { { { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat }, { kOnTheGrid, kHatOff },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .3f, .01f },
+        // Festival: on the grid, offbeat hat leads.
+        { { { { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat }, { kOnTheGrid, kHatOff },
+              { kOnTheGrid, kFlat }, { kOnTheGrid, kFlat } } }, .3f, .015f },
+    } };
+    return table[static_cast<std::size_t>(std::min(style, Style::Festival))];
+}
+
 constexpr std::array<int, 5> kMinorPentatonic { 0, 3, 5, 7, 10 };
 
 bool locked(std::uint32_t mask, int lane) noexcept { return (mask >> lane) & 1u; }
@@ -199,6 +283,10 @@ void writeLane(const LaneDef& d, Role role, const GenerateParams& p, const Style
     lane.length = 2 * kSteps;
     const float scale = densityScale(p.density);
     const float c = std::clamp(p.complexity, 0.0f, 1.0f);
+    const float g = std::clamp(p.groove, 0.0f, 1.0f);
+    const GrooveDef& feel = groove(p.style);
+    const LaneGroove& lg = feel.lanes[static_cast<std::size_t>(role)];
+    const bool loose = role == Hat || role == Perc;
 
     for (int bar = 0; bar < 2; ++bar)
     {
@@ -214,23 +302,24 @@ void writeLane(const LaneDef& d, Role role, const GenerateParams& p, const Style
 
             step.on = true;
             const bool downbeat = s % 4 == 0;
+            const auto pos = static_cast<std::size_t>(s % 4);
             step.velocity = anchor ? std::max(d.velocity, 0.85f) : d.velocity * static_cast<float>(0.8 + 0.2 * rng.uniform());
             if (downbeat && !anchor)
                 step.velocity = std::min(1.0f, step.velocity + 0.1f);
-            step.microOffset = d.microOffset;
+            step.velocity *= 1.0f + (lg.accent[pos] - 1.0f) * g;
+            step.microOffset = lg.timing[pos] * g;
 
-            if (role == Hat)
-            {
-                // Hats: lighter offbeats, small human jitter, rolls on busy styles.
-                if (s % 2 != 0)
-                    step.velocity *= 0.8f;
-                step.microOffset += static_cast<float>(rng.bipolar() * 0.04 * c);
-                if (rng.uniform() < style.rollChance * c)
-                    step.ratchet = style.rollSize;
-            }
+            // Hats and perc: small human jitter, scaled by the style's looseness.
+            const double jitter = rng.bipolar();
+            if (loose)
+                step.microOffset += static_cast<float>(jitter * feel.jitter * g * (0.5 + 0.5 * c));
+
+            if (role == Hat && rng.uniform() < style.rollChance * c)
+                step.ratchet = style.rollSize;
             // Extras at high complexity become probabilistic, so the loop evolves on its own.
             if (!anchor && c > 0.6f && rng.uniform() < (c - 0.6f))
                 step.probability = 0.7f;
+            step.microOffset = std::clamp(step.microOffset, -0.5f, 0.5f);
         }
         // Snare ghost notes sit just before the backbeats.
         if (role == Snare)
@@ -238,7 +327,7 @@ void writeLane(const LaneDef& d, Role role, const GenerateParams& p, const Style
             {
                 Step& step = lane.steps[static_cast<std::size_t>(bar * kSteps + s)];
                 if (!step.on && rng.uniform() < style.ghostSnare * c)
-                    step = Step { true, 0.3f, 1.0f, d.microOffset, -1, 1 };
+                    step = Step { true, feel.ghostVelocity, 1.0f, lg.timing[3] * g, -1, 1 };
             }
     }
 }
@@ -258,7 +347,7 @@ void writeSub(const GenerateParams& p, const StyleDef& style, const Lane& kick, 
         {
             const Step& k = kick.steps[static_cast<std::size_t>(i)];
             if (k.on && (i % kSteps == 0 || rng.uniform() < 0.85))
-                sub.steps[static_cast<std::size_t>(i)] = Step { true, k.velocity, 1.0f, 0.0f, -1, 1 };
+                sub.steps[static_cast<std::size_t>(i)] = Step { true, k.velocity, 1.0f, k.microOffset, -1, 1 }; // locked to the kick
         }
     }
 
@@ -296,7 +385,7 @@ void generate(const GenerateParams& p, Pattern& pattern) noexcept
     dsp::Random rng(dsp::hash64(p.seed ^ (static_cast<std::uint64_t>(p.style) << 40)));
 
     pattern.stepBeats = 0.25;
-    pattern.swing = style.swing;
+    pattern.swing = 0.5 + (style.swing - 0.5) * static_cast<double>(std::clamp(p.groove, 0.0f, 1.0f));
 
     for (int role = 0; role < kNumRoles; ++role)
     {
