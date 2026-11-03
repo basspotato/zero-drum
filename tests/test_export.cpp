@@ -218,8 +218,11 @@ TEST_CASE("Export: deterministic, restores mute flags and writes a loadable patt
     CHECK_FALSE(e->part(0).mix.mute);
     CHECK_FALSE(fs::exists(a / "parts" / "04-part-4.wav")); // muted parts are not exported
 
-    std::ifstream pf(a / "pattern.zdpattern");
-    const std::string text { std::istreambuf_iterator<char>(pf), std::istreambuf_iterator<char>() };
+    std::string text;
+    {
+        std::ifstream pf(a / "pattern.zdpattern"); // closed before cleanup: Windows cannot delete open files
+        text.assign(std::istreambuf_iterator<char>(pf), std::istreambuf_iterator<char>());
+    }
     Pattern q;
     REQUIRE(deserializePattern(text, q));
     CHECK(serializePattern(q) == serializePattern(e->sequencer().pattern()));
