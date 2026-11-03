@@ -145,7 +145,7 @@ TEST_CASE("Sample player: +12 semitones plays twice as fast")
 TEST_CASE("Synth hat sample is short, finite and audible")
 {
     const auto hat = makeSynthHatSample(48000.0);
-    REQUIRE(hat);
+    REQUIRE(hat.get() != nullptr);
     CHECK(hat->samples.size() == 12000);
     CHECK(zd::test::allFinite(hat->samples));
     CHECK(zd::test::peak(hat->samples) > 0.05);
