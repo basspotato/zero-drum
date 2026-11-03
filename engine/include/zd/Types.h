@@ -17,6 +17,7 @@ struct NoteEvent
     int offset = 0;       ///< sample offset in the block, 0 <= offset < numSamples
     int part = 0;         ///< part index, 0 <= part < kMaxParts
     float velocity = 1.0f;///< 0..1
+    int note = -1;        ///< MIDI note for pitched parts (808); -1 = the part's own tune
 };
 
 /// Host or internal transport state at the start of a block.
@@ -42,6 +43,8 @@ enum class EngineType : std::uint8_t
     AnalogKick,
     AnalogSnare,
     Sample,
+    FmPerc,
+    Sub808,
 };
 
 } // namespace zd

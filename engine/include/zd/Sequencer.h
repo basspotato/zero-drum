@@ -13,6 +13,7 @@ struct Step
     float velocity = 1.0f;
     float probability = 1.0f;  ///< 0..1, decided by a seeded hash so it never depends on block size
     float microOffset = 0.0f;  ///< timing nudge as a fraction of one step, -0.5..0.5
+    int note = -1;             ///< MIDI note for pitched parts; -1 = the part's own tune
 };
 
 /// One lane of a pattern. Each lane drives the part with the same index.
