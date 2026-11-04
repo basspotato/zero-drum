@@ -29,6 +29,7 @@ void SamplePlayerVoice::trigger(const SampleData* sample, const SampleParams& p,
     env_ = 1.0;
     envCoef_ = p.decay > 0.0f ? dsp::decayCoefficient(p.decay, sampleRate_) : 1.0;
     velocity_ = velocity;
+    reverse_ = p.reverse;
 }
 
 float SamplePlayerVoice::hermite(const float* data, int length, double position) noexcept
@@ -58,7 +59,7 @@ void SamplePlayerVoice::render(float* out, int numSamples) noexcept
             endNote();
             return;
         }
-        const float s = hermite(data, length, position_);
+        const float s = hermite(data, length, reverse_ ? static_cast<double>(length - 1) - position_ : position_);
         out[i] += s * static_cast<float>(env_) * velocity_ * fade_.next();
         position_ += increment_;
         env_ *= envCoef_;

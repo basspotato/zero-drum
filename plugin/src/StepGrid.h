@@ -10,7 +10,7 @@
 /// cell to add a hit, click a hit to remove it, drag a hit up or down for velocity,
 /// right-click a hit to cycle its roll (1, 2, 3, 4 hits per step), Alt-drag for probability,
 /// Ctrl-drag (Cmd on a Mac) sideways for timing. Click a lane's name for its length,
-/// Euclidean rhythms and humanize. The playhead follows the host, and every edit goes
+/// Euclidean rhythms, shifting and humanize; M and S mute and solo it. The playhead follows the host, and every edit goes
 /// straight to the audio thread and into the saved state (with undo).
 class StepGrid final : public juce::Component, private juce::Timer
 {
@@ -22,7 +22,7 @@ public:
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
 
-    static constexpr int kHeaderWidth = 72;
+    static constexpr int kHeaderWidth = 104;
     /// Rebuilds the rows after a pad's sample was loaded or cleared.
     void refreshLanes();
 
@@ -35,6 +35,10 @@ private:
     const zd::Lane& laneOfRow(int row) const noexcept { return pattern_.lanes[static_cast<std::size_t>(rows_[static_cast<std::size_t>(row)])]; }
     juce::Rectangle<float> cellBounds(int lane, int step) const;
     bool cellAt(juce::Point<float> p, int& lane, int& step) const;
+    /// The mute and solo boxes in a row's header.
+    juce::Rectangle<float> muteBox(int row) const;
+    juce::Rectangle<float> soloBox(int row) const;
+    void shiftLane(int lane, int by);
 
     ZeroDrumProcessor& owner_;
     zd::Pattern pattern_;

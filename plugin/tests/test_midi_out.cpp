@@ -132,3 +132,73 @@ int main(int argc, char** argv)
     doctest::Context context(argc, argv);
     return context.run();
 }
+
+namespace {
+
+/// Note-ons per channel/note over 4 s of free-running playback.
+std::map<std::pair<int, int>, int> countOns(ZeroDrumProcessor& p, int block)
+{
+    juce::AudioBuffer<float> audio(2, block);
+    juce::MidiBuffer midi;
+    midi.ensureSize(4096);
+    std::map<std::pair<int, int>, int> ons;
+    for (long long pos = 0; pos < 48000LL * 4; pos += block)
+    {
+        midi.clear();
+        p.processBlock(audio, midi);
+        for (const auto meta : midi)
+            if (meta.getMessage().isNoteOn())
+                ++ons[std::make_pair(meta.getMessage().getChannel(), meta.getMessage().getNoteNumber())];
+    }
+    return ons;
+}
+
+} // namespace
+
+TEST_CASE("Mute and solo: muted parts leave MIDI out and the mix, solo keeps only itself")
+{
+    Juce juce;
+    auto p = makeProcessor(48000.0, 512);
+    setParam(*p, "freeRun", 1.0f);
+    const auto all = countOns(*p, 512);
+    const auto kick = std::make_pair(ZeroDrumProcessor::kDrumMidiChannel, 36);
+    const auto snare = std::make_pair(ZeroDrumProcessor::kDrumMidiChannel, 38);
+    REQUIRE(all.count(kick) == 1);
+    REQUIRE(all.count(snare) == 1);
+
+    p->setLaneMute(0, true);
+    CHECK(p->laneMuted(0));
+    auto muted = countOns(*p, 512);
+    CHECK(muted.count(kick) == 0);
+    CHECK(muted.count(snare) == 1);
+
+    p->setLaneSolo(1, true);
+    auto solo = countOns(*p, 512);
+    CHECK(solo.size() == 1);
+    CHECK(solo.count(snare) == 1);
+    CHECK(p->audibleMask() == (1u << 1));
+
+    // Both are saved with the session.
+    juce::MemoryBlock state;
+    p->getStateInformation(state);
+    auto q = makeProcessor(48000.0, 512);
+    q->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    CHECK(q->laneMuted(0));
+    CHECK(q->laneSoloed(1));
+    CHECK_FALSE(q->laneSoloed(0));
+}
+
+TEST_CASE("Note repeat: the rate menu maps to beat spacings, triplets included")
+{
+    CHECK(ZeroDrumProcessor::noteRepeatBeats(0) == doctest::Approx(1.0));
+    CHECK(ZeroDrumProcessor::noteRepeatBeats(2) == doctest::Approx(0.25));
+    CHECK(ZeroDrumProcessor::noteRepeatBeats(3) == doctest::Approx(0.125));
+    CHECK(ZeroDrumProcessor::noteRepeatBeats(5) == doctest::Approx(1.0 / 6.0));
+    CHECK(ZeroDrumProcessor::noteRepeatBeats(99) == doctest::Approx(1.0 / 12.0)); // clamped
+    Juce juce;
+    auto p = makeProcessor(48000.0, 256);
+    auto* rate = dynamic_cast<juce::AudioParameterChoice*>(p->state().getParameter("repeatRate"));
+    REQUIRE(rate != nullptr);
+    CHECK(rate->choices.size() == 7);
+    CHECK(rate->getIndex() == 2); // 1/16 by default, as before
+}

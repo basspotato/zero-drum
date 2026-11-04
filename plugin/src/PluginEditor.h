@@ -41,6 +41,28 @@ public:
     }
 };
 
+/// A pattern slot button: click to edit the slot, right-click for its menu.
+class SlotButton final : public juce::TextButton
+{
+public:
+    std::function<void()> onMenu;
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu())
+        {
+            if (onMenu)
+                onMenu();
+            return;
+        }
+        juce::TextButton::mouseDown(e);
+    }
+    void mouseUp(const juce::MouseEvent& e) override
+    {
+        if (!e.mods.isPopupMenu())
+            juce::TextButton::mouseUp(e);
+    }
+};
+
 /// The selected pad's main controls: strip, velocity to tone and reverb send.
 class PartPanel final : public juce::Component
 {
@@ -67,6 +89,8 @@ private:
     int part_ = 0;
     std::array<Knob, kKnobs> knobs_;
     juce::ToggleButton crush_ { "Crush" };
+    juce::ToggleButton reverse_ { "Reverse" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> reverseAttachment_;
     juce::TextButton load_ { "Load sample..." }, clear_ { "Clear" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> crushAttachment_;
 };
@@ -96,9 +120,17 @@ private:
     juce::Label dragLabel_ { {}, "Drag out:" };
     std::vector<std::unique_ptr<MidiDragChip>> chips_;
     juce::Label summary_;
-    std::array<juce::TextButton, zd::kMaxChain> slots_;
+    std::array<SlotButton, zd::kMaxChain> slots_;
     juce::ComboBox chain_;
+    juce::TextButton autoFill_ { "Auto fill" };
     void refreshSlots();
+    void showSlotMenu(int slot);
+    void selectSlot(int slot);
+    void loadKitFile(const juce::File& file);
+    static juce::File kitsFolder();
+    juce::ComboBox repeatRate_;
+    juce::Label repeatLabel_ { {}, "Repeat" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> repeatAttachment_;
     juce::TooltipWindow tooltips_ { this };
     juce::GenericAudioProcessorEditor generic_;
     MixPage mix_;

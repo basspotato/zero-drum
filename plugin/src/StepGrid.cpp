@@ -2,6 +2,7 @@
 
 #include "Theme.h"
 
+#include <algorithm>
 #include <cmath>
 
 StepGrid::StepGrid(ZeroDrumProcessor& owner) : owner_(owner), pattern_(owner.currentPattern())
@@ -65,6 +66,33 @@ bool StepGrid::cellAt(juce::Point<float> p, int& lane, int& step) const
     return step < pattern_.lanes[static_cast<std::size_t>(lane)].length;
 }
 
+juce::Rectangle<float> StepGrid::muteBox(int row) const
+{
+    const auto r = cellBounds(row, 0);
+    return { static_cast<float>(kHeaderWidth) - 36.0f, r.getCentreY() - 9.0f, 18.0f, 18.0f };
+}
+
+juce::Rectangle<float> StepGrid::soloBox(int row) const
+{
+    return muteBox(row).translated(20.0f, 0.0f);
+}
+
+void StepGrid::shiftLane(int lane, int by)
+{
+    // Rotates the lane's steps inside its length: later (right) for by > 0, earlier for by < 0.
+    owner_.pushUndo();
+    owner_.editPattern([lane, by](zd::Pattern& pat) {
+        auto& l = pat.lanes[static_cast<std::size_t>(lane)];
+        const int n = l.length;
+        if (n <= 1)
+            return;
+        const int k = ((by % n) + n) % n;
+        std::rotate(l.steps.begin(), l.steps.begin() + (n - k), l.steps.begin() + n);
+    });
+    pattern_ = owner_.currentPattern();
+    repaint();
+}
+
 void StepGrid::paint(juce::Graphics& g)
 {
     g.fillAll(zdui::kBackground);
@@ -77,8 +105,19 @@ void StepGrid::paint(juce::Graphics& g)
         const auto row = cellBounds(l, 0);
         g.setColour(colour);
         g.setFont(juce::FontOptions(13.0f, juce::Font::bold));
-        g.drawFittedText(owner_.padName(part), juce::Rectangle<float>(6.0f, row.getY(), kHeaderWidth - 8.0f, row.getHeight()).toNearestInt(),
-                         juce::Justification::centredLeft, 1, 0.8f);
+        const bool muted = ((owner_.audibleMask() >> part) & 1u) == 0;
+        g.setColour(muted ? colour.withAlpha(0.4f) : colour);
+        g.drawFittedText(owner_.padName(part), juce::Rectangle<float>(6.0f, row.getY(), kHeaderWidth - 44.0f, row.getHeight()).toNearestInt(),
+                         juce::Justification::centredLeft, 1, 0.7f);
+        auto box = [&](juce::Rectangle<float> b, const char* text, bool on, juce::Colour onColour) {
+            g.setColour(on ? onColour : zdui::kCellOff);
+            g.fillRoundedRectangle(b, 3.0f);
+            g.setColour(on ? juce::Colours::black : zdui::kDim);
+            g.setFont(juce::FontOptions(11.0f, juce::Font::bold));
+            g.drawText(text, b, juce::Justification::centred);
+        };
+        box(muteBox(l), "M", owner_.laneMuted(part), juce::Colour(0xffe0b040));
+        box(soloBox(l), "S", owner_.laneSoloed(part), juce::Colour(0xff40c0e0));
 
         for (int s = 0; s < cols; ++s)
         {
@@ -97,7 +136,7 @@ void StepGrid::paint(juce::Graphics& g)
             {
                 // Velocity fills the cell from the bottom; rolls show as ticks.
                 const float v = juce::jlimit(0.05f, 1.0f, step.velocity);
-                g.setColour(colour.withAlpha(0.35f + 0.65f * v * step.probability));
+                g.setColour(colour.withAlpha((0.35f + 0.65f * v * step.probability) * (muted ? 0.35f : 1.0f)));
                 g.fillRoundedRectangle(r.withTrimmedTop(r.getHeight() * (1.0f - v)), 3.0f);
                 g.setColour(colour);
                 g.drawRoundedRectangle(r, 3.0f, 1.0f);
@@ -179,6 +218,22 @@ void StepGrid::mouseDown(const juce::MouseEvent& e)
 {
     if (e.position.x < static_cast<float>(kHeaderWidth) + 6.0f)
     {
+        for (int r = 0; r < rows(); ++r)
+        {
+            const int part = rows_[static_cast<std::size_t>(r)];
+            if (muteBox(r).contains(e.position))
+            {
+                owner_.setLaneMute(part, !owner_.laneMuted(part));
+                repaint();
+                return;
+            }
+            if (soloBox(r).contains(e.position))
+            {
+                owner_.setLaneSolo(part, !owner_.laneSoloed(part));
+                repaint();
+                return;
+            }
+        }
         showLaneMenu(e.position);
         return;
     }
@@ -275,6 +330,8 @@ void StepGrid::showLaneMenu(juce::Point<float> p)
     menu.addSectionHeader(owner_.padName(lane));
     menu.addSubMenu("Length", lengths);
     menu.addSubMenu("Euclidean", euclid);
+    menu.addItem("Shift right (later)", [this, lane] { shiftLane(lane, 1); });
+    menu.addItem("Shift left (earlier)", [this, lane] { shiftLane(lane, -1); });
     menu.addItem("Humanize this lane", [this, lane] {
         owner_.humanizeBeat(0.7f, lane);
         pattern_ = owner_.currentPattern();

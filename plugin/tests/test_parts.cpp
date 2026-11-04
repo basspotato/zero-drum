@@ -168,3 +168,58 @@ TEST_CASE("Slots: a new slot copies the current one, edits stay in their slot, a
     // B is two bars long, so a chain plays A for one bar and B for two.
     CHECK(zd::patternBars(q->currentPattern()) == 2);
 }
+
+TEST_CASE("Slots: copy, paste, clear and variation; auto fill makes the export longer")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    auto p = std::make_unique<ZeroDrumProcessor>();
+    p->prepareToPlay(48000.0, 512);
+    const auto a = zd::serializePattern(p->currentPattern());
+    CHECK_FALSE(p->hasSlotCopy());
+    p->copySlot(0);
+    REQUIRE(p->hasSlotCopy());
+    p->clearSlot(0);
+    for (const auto& lane : p->currentPattern().lanes)
+        for (const auto& st : lane.steps)
+            REQUIRE_FALSE(st.on);
+    REQUIRE(p->undo()); // clearing the edited slot is undoable
+    CHECK(zd::serializePattern(p->currentPattern()) == a);
+    REQUIRE(p->pasteSlot(2));
+    p->selectSlot(2);
+    CHECK(zd::serializePattern(p->currentPattern()) == a);
+
+    p->selectSlot(0);
+    const int target = p->makeVariation();
+    CHECK(target == 1);
+    CHECK(p->editSlot() == 0);
+    p->selectSlot(1);
+    const auto variation = zd::serializePattern(p->currentPattern());
+    CHECK(variation != a);
+    // Seeded: the same session steps give the same variation.
+    auto q = std::make_unique<ZeroDrumProcessor>();
+    q->prepareToPlay(48000.0, 512);
+    q->makeVariation();
+    q->selectSlot(1);
+    CHECK(zd::serializePattern(q->currentPattern()) == variation);
+
+    // Auto fill on a lone slot: three plain passes and a fill, so the MIDI clip is 4x as long.
+    p->selectSlot(0);
+    const auto plainClip = p->writeMidiClip(-1);
+    REQUIRE(plainClip.existsAsFile());
+    const auto plainSize = plainClip.getSize();
+    p->setAutoFill(true);
+    CHECK(p->autoFill());
+    const auto filledClip = p->writeMidiClip(-1);
+    REQUIRE(filledClip.existsAsFile());
+    CHECK(filledClip.getSize() > 5 * plainSize / 2); // 4x the notes; the track headers stay the same size
+}
+
+TEST_CASE("Pads: reverse is a per-pad parameter that travels with a part file")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    auto p = std::make_unique<ZeroDrumProcessor>();
+    p->prepareToPlay(48000.0, 512);
+    set(*p, "p9SmpReverse", 1.0f);
+    CHECK(ZeroDrumProcessor::partOfParam("p9SmpReverse") == 9);
+    CHECK(plain(*p, "p9SmpReverse") > 0.5f);
+}

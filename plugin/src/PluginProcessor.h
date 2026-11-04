@@ -81,6 +81,8 @@ public:
     /// Note repeat: plays `part` on every 16th (synced to the host, or free-running when
     /// stopped) until called with part -1.
     void setNoteRepeat(int part, float velocity) noexcept;
+    /// Note repeat spacing in beats for the repeatRate choice: 1/4, 1/8, 1/16, 1/32, 1/8T, 1/16T, 1/32T.
+    static double noteRepeatBeats(int rate) noexcept;
     std::uint32_t partHits(int part) const noexcept { return engine_.hitCount(part); }
     /// Glue compressor gain reduction right now, in dB, for the Mix tab meter.
     float glueReductionDb() const noexcept { return engine_.glueReductionDb(); }
@@ -110,6 +112,24 @@ public:
     int chainCount() const;
     /// The slot playing at the playhead, and the playhead in beats from that slot's pass start.
     int playingSlot(double* localBeats = nullptr) const;
+    /// Slot tools: copy and paste a whole slot, clear one, and make a variation of the edited
+    /// slot in the next one (returns that slot). Pasting or clearing the edited slot is undoable.
+    void copySlot(int slot);
+    bool pasteSlot(int slot);
+    bool hasSlotCopy() const;
+    void clearSlot(int slot);
+    int makeVariation();
+    /// Auto fill: a fill on the last slot of the chain, or every 4th pass of a lone slot.
+    void setAutoFill(bool on);
+    bool autoFill() const;
+
+    /// Lane mute and solo (not automatable; saved with the session). Muted parts drop out of
+    /// the mix, the exports and MIDI out; any solo mutes every part that is not soloed.
+    void setLaneMute(int part, bool muted);
+    void setLaneSolo(int part, bool soloed);
+    bool laneMuted(int part) const noexcept { return ((muteMask_.load(std::memory_order_relaxed) >> part) & 1u) != 0; }
+    bool laneSoloed(int part) const noexcept { return ((soloMask_.load(std::memory_order_relaxed) >> part) & 1u) != 0; }
+    std::uint32_t audibleMask() const noexcept;
     /// Where the audio thread last was, in beats, and whether the transport runs.
     double playheadBeats() const noexcept { return playheadBeats_.load(std::memory_order_relaxed); }
     bool isTransportRunning() const noexcept { return transportRunning_.load(std::memory_order_relaxed); }
@@ -129,8 +149,8 @@ public:
 
     // ---- Pad samples: parts 6..16 (indices 5..15) play user samples (message thread) ----
     static constexpr int kFirstSamplePad = kNumStripParts;
-    static constexpr int kNumPadSuffixes = 6;
-    static constexpr const char* kPadSuffixes[kNumPadSuffixes] { "SmpPitch", "SmpDecay", "SmpStart", "Level", "Pan", "RevSend" };
+    static constexpr int kNumPadSuffixes = 7;
+    static constexpr const char* kPadSuffixes[kNumPadSuffixes] { "SmpPitch", "SmpDecay", "SmpStart", "Level", "Pan", "RevSend", "SmpReverse" };
     static constexpr double kMaxSampleSeconds = 30.0;
     static bool isSamplePad(int part) noexcept { return part >= kFirstSamplePad && part < zd::kMaxParts; }
     /// Decodes an audio file (WAV, AIFF, FLAC, Ogg, MP3 where supported) to mono and hands it to
@@ -177,7 +197,11 @@ private:
     /// Maps the current parameter values onto any engine (the live one or an export copy).
     void applyParameters(zd::Engine& engine) const noexcept;
     float value(const char* id) const noexcept;
-    zd::Pattern patternSnapshot() const;
+    std::unique_ptr<zd::Chain> chainSnapshot() const;
+    /// What plays for the slots as they are, with `edited` in the edited slot. Caller holds patternMutex_.
+    void buildChainLocked(zd::Chain& chain, const zd::Pattern& edited) const;
+    /// Replaces one slot (undoably when it is the edited one) and sends the result to the engine.
+    void setSlotPattern(int slot, const zd::Pattern& pattern);
     std::array<std::string, zd::kMaxParts> partNames() const;
 
     juce::AudioProcessorValueTreeState apvts_;
@@ -192,6 +216,9 @@ private:
     int editSlot_ = 0;                                ///< guarded by patternMutex_
     int chainCount_ = 1;                              ///< guarded by patternMutex_
     std::uint32_t slotUsed_ = 1u;                     ///< guarded by patternMutex_
+    bool autoFill_ = false;                           ///< guarded by patternMutex_
+    std::unique_ptr<zd::Pattern> slotCopy_;           ///< guarded by patternMutex_
+    std::atomic<std::uint32_t> muteMask_ { 0 }, soloMask_ { 0 };
     std::vector<zd::Pattern> undo_, redo_; ///< guarded by patternMutex_
     std::uint64_t humanizeCount_ = 0;      ///< guarded by patternMutex_
     std::uint64_t seed_ = 1;

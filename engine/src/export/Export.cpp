@@ -153,16 +153,17 @@ int defaultMidiNote(int part) noexcept
     return part >= 0 && part < static_cast<int>(notes.size()) ? notes.at(static_cast<std::size_t>(part)) : 36 + part;
 }
 
-std::vector<MidiNote> realizeLane(const Sequencer& seq, int lane, long long firstStep, long long numSteps, int defaultNote)
+namespace {
+
+/// Notes for steps [firstStep, endStep) of one pass of `p`, whose step 0 sits `passBeat`
+/// beats after the window start.
+void realizePass(const Sequencer& seq, const Pattern& p, int lane, long long firstStep, long long endStep,
+                 double passBeat, int defaultNote, std::vector<MidiNote>& notes)
 {
-    std::vector<MidiNote> notes;
-    const Pattern& p = seq.pattern();
     const Lane& l = p.lanes[static_cast<std::size_t>(lane)];
     if (l.length <= 0)
-        return notes;
-
-    const double firstBeat = static_cast<double>(firstStep) * p.stepBeats;
-    for (long long k = firstStep; k < firstStep + numSteps; ++k)
+        return;
+    for (long long k = firstStep; k < endStep; ++k)
     {
         const Step& s = l.steps[static_cast<std::size_t>(k % l.length)];
         if (!s.on || !seq.passesProbability(lane, k, s.probability))
@@ -171,7 +172,7 @@ std::vector<MidiNote> realizeLane(const Sequencer& seq, int lane, long long firs
         const double spacing = p.stepBeats / repeats;
         for (int r = 0; r < repeats; ++r)
         {
-            const double beat = seq.stepTime(lane, k) + r * spacing - firstBeat;
+            const double beat = passBeat + Sequencer::stepTimeIn(p, lane, k) + r * spacing;
             MidiNote n;
             n.tick = std::max(0, static_cast<int>(std::lround(beat * kMidiPpq)));
             n.lengthTicks = std::max(1, static_cast<int>(std::lround(spacing * kMidiPpq * 0.9)));
@@ -181,7 +182,52 @@ std::vector<MidiNote> realizeLane(const Sequencer& seq, int lane, long long firs
             notes.push_back(n);
         }
     }
+}
+
+} // namespace
+
+std::vector<MidiNote> realizeLane(const Sequencer& seq, int lane, long long firstStep, long long numSteps, int defaultNote)
+{
+    std::vector<MidiNote> notes;
+    const Pattern& first = seq.pattern();
+    const double firstBeat = static_cast<double>(firstStep) * first.stepBeats;
+    if (seq.chainCount() <= 1)
+    {
+        realizePass(seq, first, lane, firstStep, firstStep + numSteps, -firstBeat, defaultNote, notes);
+        return notes;
+    }
+    // A chain: walk its passes through the window. Each pass counts its steps from 0, as
+    // the sequencer plays them.
+    const double endBeat = firstBeat + static_cast<double>(numSteps) * first.stepBeats;
+    for (double pass = seq.passStartAt(firstBeat); pass < endBeat - 1.0e-9;)
+    {
+        const Pattern& p = seq.patternAt(pass + 1.0e-9);
+        const double len = 4.0 * patternBars(p);
+        const auto from = static_cast<long long>(std::ceil(std::max(0.0, firstBeat - pass) / p.stepBeats - 1.0e-9));
+        const auto to = static_cast<long long>(std::ceil((std::min(len, endBeat - pass)) / p.stepBeats - 1.0e-9));
+        realizePass(seq, p, lane, from, to, pass - firstBeat, defaultNote, notes);
+        pass += len;
+    }
+    std::sort(notes.begin(), notes.end(), [](const MidiNote& a, const MidiNote& b) { return a.tick < b.tick; });
     return notes;
+}
+
+int loopBars(const Sequencer& sequencer) noexcept
+{
+    if (sequencer.chainCount() <= 1)
+        return loopBars(sequencer.pattern());
+    int bars = 0;
+    for (int i = 0; i < sequencer.chainCount(); ++i)
+        bars += patternBars(sequencer.slot(i));
+    return bars;
+}
+
+bool melodicKick(const Sequencer& sequencer, int lane) noexcept
+{
+    for (int i = 0; i < sequencer.chainCount(); ++i)
+        if (melodicKick(sequencer.slot(i), lane))
+            return true;
+    return false;
 }
 
 bool writeMidi(const fs::path& path, const std::vector<MidiTrack>& tracks, double bpm)
@@ -278,7 +324,7 @@ std::vector<MidiTrack> patternTracks(const Sequencer& sequencer, int bars, const
         const bool pitched = ((pitchedMask >> i) & 1u) != 0;
         MidiTrack t;
         t.name = names[static_cast<std::size_t>(i)].empty() ? "Part " + std::to_string(i + 1) : names[static_cast<std::size_t>(i)];
-        t.channel = pitched ? 1 : melodicKick(sequencer.pattern(), i) ? kMelodicKickChannel : 9;
+        t.channel = pitched ? 1 : melodicKick(sequencer, i) ? kMelodicKickChannel : 9;
         t.notes = realizeLane(sequencer, i, 0, steps, defaultMidiNote(i));
         if (!t.notes.empty())
             tracks.push_back(std::move(t));
@@ -395,7 +441,7 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
         result.files.push_back(wav);
 
         const bool pitched = engine.part(i).type == EngineType::Sub808;
-        MidiTrack track { nameOf(i), pitched ? 1 : melodicKick(engine.sequencer().pattern(), i) ? kMelodicKickChannel : 9, realizeLane(engine.sequencer(), i, firstStep, stepsPerLoop, defaultMidiNote(i)) };
+        MidiTrack track { nameOf(i), pitched ? 1 : melodicKick(engine.sequencer(), i) ? kMelodicKickChannel : 9, realizeLane(engine.sequencer(), i, firstStep, stepsPerLoop, defaultMidiNote(i)) };
         const fs::path mid = directory / "midi" / (stem + ".mid");
         if (!writeMidi(mid, { track }, options.bpm))
         {

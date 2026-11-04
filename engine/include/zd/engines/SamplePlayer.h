@@ -13,6 +13,7 @@ struct SampleParams
     float pitchSemitones = 0.0f;
     float decay = 0.0f;  ///< seconds to -60 dB; 0 = play the whole sample at full level
     float start = 0.0f;  ///< start position as a fraction of the sample length, 0..1
+    bool reverse = false; ///< play from the end to the start (start then counts from the end)
 };
 
 class SamplePlayerVoice final : public Voice
@@ -32,6 +33,7 @@ private:
     double position_ = 0.0, increment_ = 1.0;
     double env_ = 1.0, envCoef_ = 1.0;
     float velocity_ = 1.0f;
+    bool reverse_ = false;
 };
 
 /// Cleans a loaded one-shot in place: trims silence (below -60 dBFS) from both ends, keeping
