@@ -202,6 +202,19 @@ StyleKit styleKit(Style style) noexcept
     k.kick.decay = r.kDecay * 0.001f;
     k.kick.click = r.kClick;
     k.kick.drive = r.kDrive;
+    // Melodic kick styles: a second drive stage after a mid bell (the guide's two stages).
+    if (style == Style::Hardstyle)
+    {
+        k.kick.drive2 = 0.7f;
+        k.kick.midHz = 800.0f;
+        k.kick.midDb = 8.0f;
+    }
+    else if (style == Style::Festival)
+    {
+        k.kick.drive2 = 0.4f;
+        k.kick.midHz = 600.0f;
+        k.kick.midDb = 5.0f;
+    }
 
     k.snare.tuneHz = r.sTune;
     k.snare.toneDecay = r.sBody * 0.001f;

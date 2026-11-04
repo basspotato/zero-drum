@@ -24,7 +24,9 @@ jobs:
             os: ubuntu-24.04
             pluginval: pluginval_Linux.zip
           - name: macOS
-            os: macos-15
+            # Intel runner while GitHub is short on macOS arm64 capacity; still builds the
+            # universal (arm64 + x86_64) binary and runs pluginval on the x86_64 slice.
+            os: macos-15-intel
             pluginval: pluginval_macOS.zip
           - name: Windows
             os: windows-2022

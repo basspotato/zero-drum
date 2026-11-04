@@ -58,6 +58,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     layout.add(floatParam("kickSweepTime", "Kick Sweep Time", skewed(5.0f, 200.0f, 40.0f), 35.0f, "ms"));
     layout.add(floatParam("kickDecay", "Kick Decay", skewed(50.0f, 3000.0f, 500.0f), 600.0f, "ms"));
     layout.add(floatParam("kickClick", "Kick Click", Range { 0.0f, 1.0f }, 0.4f));
+    layout.add(floatParam("kickDrive2", "Kick Drive 2", Range { 0.0f, 1.0f }, 0.0f));
+    layout.add(floatParam("kickMidFreq", "Kick Mid Freq", skewed(300.0f, 2000.0f, 800.0f), 700.0f, "Hz"));
+    layout.add(floatParam("kickMidGain", "Kick Mid Gain", Range { 0.0f, 12.0f }, 6.0f, "dB"));
     layout.add(floatParam("kickDrive", "Kick Drive", Range { 0.0f, 1.0f }, 0.25f));
     layout.add(floatParam("kickLevel", "Kick Level", Range { -48.0f, 6.0f }, -2.0f, "dB"));
 
@@ -185,6 +188,9 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
     kick.kick.decay = value("kickDecay") * 0.001f;
     kick.kick.click = value("kickClick");
     kick.kick.drive = value("kickDrive");
+    kick.kick.drive2 = value("kickDrive2");
+    kick.kick.midHz = value("kickMidFreq");
+    kick.kick.midDb = value("kickMidGain");
     kick.mix.gainDb = value("kickLevel");
 
     auto& snare = engine.part(1);
@@ -328,6 +334,12 @@ void ZeroDrumProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         {
             // Channel 2 plays the 808 melodically.
             midiEvents_[static_cast<std::size_t>(numEvents++)] = { meta.samplePosition, 4, msg.getFloatVelocity(), msg.getNoteNumber() };
+            continue;
+        }
+        if (msg.getChannel() == kKickMidiChannel)
+        {
+            // Channel 3 plays the kick melodically (hardstyle and festival kick lines).
+            midiEvents_[static_cast<std::size_t>(numEvents++)] = { meta.samplePosition, 0, msg.getFloatVelocity(), msg.getNoteNumber() };
             continue;
         }
         const int part = noteToPart(msg.getNoteNumber());
@@ -489,6 +501,9 @@ void ZeroDrumProcessor::loadStyleKit(zd::gen::Style style, int rootNote, std::ui
         setParam("kickDecay", kit.kick.decay * 1000.0f);
         setParam("kickClick", kit.kick.click);
         setParam("kickDrive", kit.kick.drive);
+        setParam("kickDrive2", kit.kick.drive2);
+        setParam("kickMidFreq", kit.kick.midHz);
+        setParam("kickMidGain", kit.kick.midDb);
         setParam("kickLevel", lv[0]);
     }
     if (!keep(1))

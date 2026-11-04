@@ -11,7 +11,8 @@ add_executable(zd_tests
     test_clap.cpp
     test_crusher.cpp
     test_choke.cpp
-    test_reverb.cpp)
+    test_reverb.cpp
+    test_melodic_kick.cpp)
 
 find_package(Threads REQUIRED)
 target_link_libraries(zd_tests PRIVATE zd_engine doctest::doctest Threads::Threads)

@@ -254,6 +254,17 @@ int loopBars(const Pattern& pattern) noexcept
     return std::clamp(static_cast<int>(std::ceil(beats / 4.0 - 1.0e-9)), 1, 16);
 }
 
+bool melodicKick(const Pattern& pattern, int lane) noexcept
+{
+    if (lane != 0)
+        return false;
+    const Lane& l = pattern.lanes[0];
+    for (int i = 0; i < l.length; ++i)
+        if (l.steps[static_cast<std::size_t>(i)].on && l.steps[static_cast<std::size_t>(i)].note >= 0)
+            return true;
+    return false;
+}
+
 std::vector<MidiTrack> patternTracks(const Sequencer& sequencer, int bars, const std::array<std::string, kMaxParts>& names,
                                      std::uint32_t pitchedMask, int lane)
 {
@@ -266,7 +277,7 @@ std::vector<MidiTrack> patternTracks(const Sequencer& sequencer, int bars, const
         const bool pitched = ((pitchedMask >> i) & 1u) != 0;
         MidiTrack t;
         t.name = names[static_cast<std::size_t>(i)].empty() ? "Part " + std::to_string(i + 1) : names[static_cast<std::size_t>(i)];
-        t.channel = pitched ? 1 : 9;
+        t.channel = pitched ? 1 : melodicKick(sequencer.pattern(), i) ? kMelodicKickChannel : 9;
         t.notes = realizeLane(sequencer, i, 0, steps, defaultMidiNote(i));
         if (!t.notes.empty())
             tracks.push_back(std::move(t));
@@ -367,7 +378,7 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
         result.files.push_back(wav);
 
         const bool pitched = engine.part(i).type == EngineType::Sub808;
-        MidiTrack track { nameOf(i), pitched ? 1 : 9, realizeLane(engine.sequencer(), i, firstStep, stepsPerLoop, defaultMidiNote(i)) };
+        MidiTrack track { nameOf(i), pitched ? 1 : melodicKick(engine.sequencer().pattern(), i) ? kMelodicKickChannel : 9, realizeLane(engine.sequencer(), i, firstStep, stepsPerLoop, defaultMidiNote(i)) };
         const fs::path mid = directory / "midi" / (stem + ".mid");
         if (!writeMidi(mid, { track }, options.bpm))
         {

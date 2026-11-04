@@ -69,10 +69,16 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const std:
 int loopBars(const Pattern& pattern) noexcept;
 
 /// MIDI tracks for the first `bars` of the pattern, one per lane that plays (or only `lane`
-/// when it is >= 0). Lanes in `pitchedMask` go on MIDI channel 2 with their notes, the rest
-/// on channel 10 with defaultMidiNote. Used for drag-and-drop clips.
+/// when it is >= 0). Lanes in `pitchedMask` go on MIDI channel 2 with their notes, a melodic
+/// kick on channel 3, the rest on channel 10 with defaultMidiNote. Used for drag-and-drop clips.
 std::vector<MidiTrack> patternTracks(const Sequencer& sequencer, int bars, const std::array<std::string, kMaxParts>& names,
                                      std::uint32_t pitchedMask, int lane = -1);
+
+/// The kick lane (part 0) with notes on its steps (hardstyle, festival) is exported on this
+/// zero-based MIDI channel (3 in DAW terms) with its notes, like the 808 on channel 2; the
+/// plugin plays the kick melodically from channel 3 too.
+inline constexpr int kMelodicKickChannel = 2;
+bool melodicKick(const Pattern& pattern, int lane) noexcept;
 
 /// General MIDI drum note for a default-kit part, used for drum lanes in MIDI export.
 int defaultMidiNote(int part) noexcept;

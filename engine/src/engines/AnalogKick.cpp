@@ -30,6 +30,17 @@ void AnalogKickVoice::trigger(const KickParams& p, float velocity) noexcept
     velocity_ = velocity;
     drive_.setDrive(p.drive);
     drive_.reset();
+    twoStage_ = p.drive2 > 0.0f;
+    if (twoStage_)
+    {
+        drive2_.setDrive(p.drive2);
+        drive2_.reset();
+        constexpr double q = 1.2;
+        mid_.setCoefficients(p.midHz, q, sampleRate_);
+        mid_.reset();
+        midK_ = 1.0 / q;
+        midGain_ = dsp::dbToGain(p.midDb) - 1.0;
+    }
     clickFilter_.reset();
     noise_.setSeed(0x5EEDull); // fixed seed: every hit is bit-identical, renders are deterministic
 }
@@ -48,7 +59,14 @@ void AnalogKickVoice::render(float* out, int numSamples) noexcept
 
         const double body = std::sin(dsp::kTwoPi * phase_) * ampEnv_;
         const double click = clickFilter_.process(noise_.bipolar()).high * clickEnv_ * clickLevel_;
-        const double y = drive_.process(body + click) * velocity_;
+        double y = drive_.process(body + click);
+        if (twoStage_)
+        {
+            // Bell between the stages: x + (G - 1) * k * band has gain G at the centre.
+            y += midGain_ * midK_ * mid_.process(y).band;
+            y = drive2_.process(y);
+        }
+        y *= velocity_;
 
         out[i] += static_cast<float>(y) * fade_.next();
 
