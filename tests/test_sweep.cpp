@@ -6,6 +6,7 @@
 #include "zd/PatternIO.h"
 #include "zd/gen/Generator.h"
 
+#include <algorithm>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -110,4 +111,46 @@ TEST_CASE("Sweep: Build sets it, a fresh beat clears it, and it survives save an
     Pattern again;
     REQUIRE(deserializePattern(serializePattern(p), again));
     CHECK(again.sweep.steps == 0);
+}
+
+TEST_CASE("MIDI out: the engine reports the sequencer's hits, the same for any block size")
+{
+    auto collect = [](int block) {
+        auto e = std::make_unique<Engine>();
+        e->prepare(kSr, 256); // larger blocks are chunked inside process()
+        loadDefaultKit(*e);
+        loadDefaultPattern(e->sequencer().pattern());
+        InternalClock clock(120.0);
+        std::vector<float> l(static_cast<std::size_t>(block)), r(static_cast<std::size_t>(block));
+        std::vector<std::pair<long long, int>> hits;
+        long long pos = 0;
+        const NoteEvent pad { 0, 9, 1.0f, -1 }; // external hits are not reported
+        for (int b = 0; pos < static_cast<long long>(kSr * 4); ++b)
+        {
+            e->process(clock.next(kSr, block), &pad, b == 0 ? 1 : 0, l.data(), r.data(), block);
+            int last = -1;
+            for (int i = 0; i < e->numSequencedEvents(); ++i)
+            {
+                const auto& ev = e->sequencedEvents()[i];
+                CHECK(ev.offset >= last); // sorted
+                CHECK(ev.offset < block);
+                CHECK(ev.part != 9);
+                last = ev.offset;
+                if (pos + ev.offset < static_cast<long long>(kSr * 4))
+                    hits.emplace_back(pos + ev.offset, ev.part);
+            }
+            pos += block;
+        }
+        return hits;
+    };
+    const auto a = collect(64);
+    CHECK(a.size() > 20);
+    for (int block : { 100, 256, 1000, 4096 })
+    {
+        auto b = collect(block);
+        auto sa = a;
+        std::sort(sa.begin(), sa.end());
+        std::sort(b.begin(), b.end());
+        CHECK(b == sa);
+    }
 }

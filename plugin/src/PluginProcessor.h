@@ -36,7 +36,7 @@ public:
 
     const juce::String getName() const override { return JucePlugin_Name; }
     bool acceptsMidi() const override { return true; }
-    bool producesMidi() const override { return false; }
+    bool producesMidi() const override { return true; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 2.0; }
 
@@ -166,6 +166,18 @@ private:
     std::array<juce::File, zd::kMaxParts> padFiles_ {};
     std::array<std::array<std::atomic<float>*, kNumPadSuffixes>, zd::kMaxParts> padParams_ {};
     void applyPadSamples(zd::Engine& engine) const;
+
+    // MIDI out: the sequencer's hits as notes for the host (audio thread only).
+    struct PendingNoteOff
+    {
+        int samplesLeft = 0;
+        int channel = 1;
+        int note = 0;
+    };
+    static constexpr int kMaxPendingOffs = 256;
+    std::array<PendingNoteOff, kMaxPendingOffs> pendingOffs_ {};
+    int numPendingOffs_ = 0;
+    void writeMidiOut(juce::MidiBuffer& midi, int numSamples, bool playing) noexcept;
 
     // Parameter values by ID, built once so the audio thread never constructs juce::Strings.
     std::vector<std::string> paramIds_;

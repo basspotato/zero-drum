@@ -132,6 +132,12 @@ public:
     void process(const Transport& transport, const NoteEvent* external, int numExternal,
                  float* left, float* right, int numSamples) noexcept;
 
+    /// The sequencer's own hits from the last process() call (not the external ones), sorted
+    /// by offset within that whole block. For MIDI out: the generated beat can drive other
+    /// instruments. Audio thread only, valid until the next process().
+    const NoteEvent* sequencedEvents() const noexcept { return sequenced_.data(); }
+    int numSequencedEvents() const noexcept { return numSequenced_; }
+
     Part& part(int index) noexcept { return parts_[static_cast<std::size_t>(index)]; }
     Sequencer& sequencer() noexcept { return sequencer_; }
 
@@ -210,6 +216,10 @@ private:
     std::array<Part, kMaxParts> parts_;
     Sequencer sequencer_;
     std::array<NoteEvent, kMaxEventsPerBlock> events_ {};
+    std::array<NoteEvent, kMaxEventsPerBlock> sequenced_ {};
+    int numSequenced_ = 0;
+    int sequencedBase_ = 0; ///< offset of the current chunk inside the caller's block
+    bool inChunk_ = false;
     double sampleRate_ = 48000.0;
     int maxBlockSize_ = 0;
     float masterGain_ = 1.0f;

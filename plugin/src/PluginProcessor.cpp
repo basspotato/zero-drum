@@ -184,6 +184,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
         add("RevSend", "Reverb", Range { 0.0f, 1.0f }, 0.0f, "");
     }
 
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "midiOut", 1 }, "MIDI Out", true));
+    layout.add(floatParam("midiNoteLength", "MIDI Out Note Length", skewed(10.0f, 2000.0f, 150.0f), 100.0f, "ms"));
+
     layout.add(floatParam("masterLevel", "Master Level", Range { -24.0f, 6.0f }, zd::Engine::kDefaultMasterDb, "dB"));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "clipOn", 1 }, "Master Clipper", true));
     layout.add(floatParam("subDuck", "808 Sidechain", Range { 0.0f, 1.0f }, 0.5f));
@@ -334,6 +337,7 @@ float ZeroDrumProcessor::stripValue(int part, const char* suffix) const noexcept
 void ZeroDrumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     engine_.prepare(sampleRate, std::max(samplesPerBlock, 32));
+    numPendingOffs_ = 0;
     // The master stage is always in, so the reported latency never changes; turning the
     // clipper off swaps in a matching delay.
     engine_.setMasterStage(true);
@@ -438,6 +442,83 @@ void ZeroDrumProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     float* left = buffer.getWritePointer(0);
     float* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : left;
     engine_.process(transport, midiEvents_.data(), numEvents, left, right, numSamples);
+    writeMidiOut(midi, numSamples, transport.playing);
+}
+
+void ZeroDrumProcessor::writeMidiOut(juce::MidiBuffer& midi, int numSamples, bool playing) noexcept
+{
+    // The input notes were consumed above; the buffer now carries what the plugin sends.
+    // JUCE's wrappers reserve this buffer up front, so adding a few events does not allocate.
+    midi.clear();
+    const bool on = value("midiOut") > 0.5f;
+    auto removeOff = [this](int k) {
+        pendingOffs_[static_cast<std::size_t>(k)] = pendingOffs_[static_cast<std::size_t>(--numPendingOffs_)];
+    };
+
+    // Switched off or stopped: end every held note now, so nothing hangs downstream.
+    if (!on || !playing)
+    {
+        while (numPendingOffs_ > 0)
+        {
+            const auto& off = pendingOffs_[static_cast<std::size_t>(numPendingOffs_ - 1)];
+            midi.addEvent(juce::MidiMessage::noteOff(off.channel, off.note), 0);
+            --numPendingOffs_;
+        }
+        if (!on)
+            return;
+    }
+
+    // Every note-off waits in pendingOffs_ (samplesLeft counted from this block's start).
+    const int length = juce::jmax(1, static_cast<int>(std::lround(value("midiNoteLength") * 0.001 * getSampleRate())));
+    const int root = static_cast<int>(value("genRoot"));
+    const auto* events = engine_.sequencedEvents();
+    for (int i = 0; i < engine_.numSequencedEvents(); ++i)
+    {
+        const auto& e = events[i];
+        int channel = 1;
+        int note = zd::exporting::defaultMidiNote(e.part);
+        if (e.part == 4)
+        {
+            channel = kSubMidiChannel; // the 808 line, pitched, as in the exported MIDI
+            note = e.note >= 0 ? e.note : root;
+        }
+        else if (e.part == 0 && e.note >= 0)
+        {
+            channel = kKickMidiChannel; // a melodic kick line (hardstyle, festival)
+            note = e.note;
+        }
+        note = juce::jlimit(0, 127, note);
+        // A note still held on the same key and channel ends right here, so pairs never overlap.
+        for (int k = 0; k < numPendingOffs_; ++k)
+        {
+            const auto& off = pendingOffs_[static_cast<std::size_t>(k)];
+            if (off.channel == channel && off.note == note)
+            {
+                midi.addEvent(juce::MidiMessage::noteOff(channel, note), e.offset);
+                removeOff(k);
+                break;
+            }
+        }
+        if (numPendingOffs_ >= kMaxPendingOffs)
+            continue;
+        const auto velocity = static_cast<juce::uint8>(juce::jlimit(1, 127, static_cast<int>(std::lround(e.velocity * 127.0f))));
+        midi.addEvent(juce::MidiMessage::noteOn(channel, note, velocity), e.offset);
+        pendingOffs_[static_cast<std::size_t>(numPendingOffs_++)] = { e.offset + length, channel, note };
+    }
+
+    // Offs due in this block go out; the rest move on to the next block.
+    for (int k = 0; k < numPendingOffs_;)
+    {
+        auto& off = pendingOffs_[static_cast<std::size_t>(k)];
+        if (off.samplesLeft < numSamples)
+        {
+            midi.addEvent(juce::MidiMessage::noteOff(off.channel, off.note), juce::jmax(0, off.samplesLeft));
+            removeOff(k);
+            continue;
+        }
+        off.samplesLeft -= numSamples;
+        ++k;
+    }
 }
 
 void ZeroDrumProcessor::auditionPart(int part, float velocity) noexcept

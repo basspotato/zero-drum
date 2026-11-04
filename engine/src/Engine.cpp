@@ -460,6 +460,11 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
 {
     std::fill(left, left + numSamples, 0.0f);
     std::fill(right, right + numSamples, 0.0f);
+    if (!inChunk_)
+    {
+        numSequenced_ = 0;
+        sequencedBase_ = 0;
+    }
     applyPendingPattern();
     applyPendingSamples();
 
@@ -476,7 +481,10 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
             for (int i = 0; i < numExternal && numChunk < static_cast<int>(chunkEvents.size()); ++i)
                 if (external[i].offset >= done && external[i].offset < done + n)
                     chunkEvents[static_cast<std::size_t>(numChunk++)] = { external[i].offset - done, external[i].part, external[i].velocity, external[i].note };
+            inChunk_ = true;
+            sequencedBase_ = done;
             process(t, chunkEvents.data(), numChunk, left + done, right + done, n);
+            inChunk_ = false;
             t.ppqPosition += static_cast<double>(n) * t.bpm / (60.0 * sampleRate_);
             done += n;
         }
@@ -484,6 +492,22 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
     }
 
     int count = sequencer_.collect(transport, sampleRate_, numSamples, events_.data(), kMaxEventsPerBlock);
+    {
+        // Keep the sequencer's hits for MIDI out, sorted by offset (insertion: no allocation).
+        const int firstNew = numSequenced_;
+        for (int i = 0; i < count && numSequenced_ < kMaxEventsPerBlock; ++i)
+        {
+            NoteEvent e = events_[static_cast<std::size_t>(i)];
+            e.offset += sequencedBase_;
+            int j = numSequenced_++;
+            while (j > firstNew && sequenced_[static_cast<std::size_t>(j - 1)].offset > e.offset)
+            {
+                sequenced_[static_cast<std::size_t>(j)] = sequenced_[static_cast<std::size_t>(j - 1)];
+                --j;
+            }
+            sequenced_[static_cast<std::size_t>(j)] = e;
+        }
+    }
     for (int i = 0; i < numExternal && count < kMaxEventsPerBlock; ++i)
         if (external[i].part >= 0 && external[i].part < kMaxParts)
             events_[static_cast<std::size_t>(count++)] = NoteEvent { std::clamp(external[i].offset, 0, numSamples - 1), external[i].part, external[i].velocity, external[i].note };
