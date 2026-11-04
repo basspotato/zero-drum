@@ -186,6 +186,13 @@ void StepGrid::paint(juce::Graphics& g)
                     g.drawText(juce::String(juce::roundToInt(step.probability * 100.0f)) + "%", r.withHeight(12.0f).toNearestInt(),
                                juce::Justification::centred);
                 }
+                if (step.note >= 0 && r.getWidth() > 18.0f && r.getHeight() > 30.0f)
+                {
+                    g.setColour(zdui::kText);
+                    g.setFont(juce::FontOptions(9.5f, juce::Font::bold));
+                    g.drawText(juce::MidiMessage::getMidiNoteName(step.note, true, true, 3), r.withTrimmedTop(r.getHeight() - 16.0f).toNearestInt(),
+                               juce::Justification::centred);
+                }
                 for (int k = 1; k < step.ratchet; ++k)
                 {
                     const float x = r.getX() + r.getWidth() * k / step.ratchet;
@@ -220,13 +227,13 @@ void StepGrid::timerCallback()
         {
             const auto& a = latest.lanes[static_cast<std::size_t>(l)];
             const auto& b = pattern_.lanes[static_cast<std::size_t>(l)];
-            if (a.length != b.length)
+            if (a.length != b.length || a.straight != b.straight)
                 changed = true;
             for (int s = 0; s < a.length && !changed; ++s)
             {
                 const auto& x = a.steps[static_cast<std::size_t>(s)];
                 const auto& y = b.steps[static_cast<std::size_t>(s)];
-                changed = x.on != y.on || std::abs(x.velocity - y.velocity) > 1.0e-6f || x.ratchet != y.ratchet
+                changed = x.on != y.on || std::abs(x.velocity - y.velocity) > 1.0e-6f || x.ratchet != y.ratchet || x.note != y.note
                        || std::abs(x.probability - y.probability) > 1.0e-6f;
             }
         }
@@ -312,7 +319,10 @@ void StepGrid::mouseDown(const juce::MouseEvent& e)
     downWasOn_ = s.on;
     moved_ = false;
     // Alt drags probability, Ctrl (Cmd on a Mac) drags timing; a plain drag sets velocity.
-    dragMode_ = e.mods.isAltDown() ? DragMode::Probability : e.mods.isCommandDown() ? DragMode::Timing : DragMode::Velocity;
+    dragMode_ = e.mods.isAltDown()       ? DragMode::Probability
+                : e.mods.isCommandDown() ? DragMode::Timing
+                : e.mods.isShiftDown() && owner_.defaultNote(lane) >= 0 ? DragMode::Pitch
+                                                                       : DragMode::Velocity;
     if (!s.on)
     {
         s = zd::Step { true, 0.9f, 1.0f, 0.0f, -1, 1 };
@@ -323,6 +333,7 @@ void StepGrid::mouseDown(const juce::MouseEvent& e)
     downVelocity_ = s.velocity;
     downProbability_ = s.probability;
     downOffset_ = s.microOffset;
+    downNote_ = s.note >= 0 ? s.note : owner_.defaultNote(lane);
     repaint();
 }
 
@@ -343,6 +354,10 @@ void StepGrid::mouseDrag(const juce::MouseEvent& e)
             break;
         case DragMode::Probability:
             st.probability = juce::jlimit(0.0f, 1.0f, downProbability_ - static_cast<float>(e.getDistanceFromDragStartY()) / 120.0f);
+            break;
+        case DragMode::Pitch:
+            // 8 pixels per semitone, up to two octaves either way.
+            st.note = juce::jlimit(0, 127, downNote_ - e.getDistanceFromDragStartY() / 8);
             break;
         case DragMode::Timing:
         {
@@ -400,6 +415,19 @@ void StepGrid::showLaneMenu(juce::Point<float> p)
         pattern_ = owner_.currentPattern();
         repaint();
     });
+    juce::PopupMenu velocity;
+    velocity.addItem("Ramp up (soft to loud)", [this, lane] { owner_.rampLane(lane, true); pattern_ = owner_.currentPattern(); repaint(); });
+    velocity.addItem("Ramp down (loud to soft)", [this, lane] { owner_.rampLane(lane, false); pattern_ = owner_.currentPattern(); repaint(); });
+    menu.addSubMenu("Velocity", velocity);
+    menu.addItem("Straight (no swing)", true, pattern_.lanes[static_cast<std::size_t>(lane)].straight, [this, lane] {
+        owner_.pushUndo();
+        owner_.editPattern([lane](zd::Pattern& pat) {
+            auto& l = pat.lanes[static_cast<std::size_t>(lane)];
+            l.straight = !l.straight;
+        });
+        pattern_ = owner_.currentPattern();
+        repaint();
+    });
     menu.addItem("Shift right (later)", [this, lane] { shiftLane(lane, 1); });
     menu.addItem("Shift left (earlier)", [this, lane] { shiftLane(lane, -1); });
     menu.addItem("Humanize this lane", [this, lane] {
@@ -413,7 +441,15 @@ void StepGrid::showLaneMenu(juce::Point<float> p)
         repaint();
     });
     menu.addSeparator();
+    menu.addItem("Copy lane", [this, lane] { owner_.copyLane(lane); });
+    menu.addItem("Paste lane", owner_.hasLaneCopy(), false, [this, lane] {
+        owner_.pasteLane(lane);
+        pattern_ = owner_.currentPattern();
+        repaint();
+    });
+    menu.addSeparator();
     menu.addItem("Rename...", [this, lane] { zdui::askPartName(owner_, lane, [this] { repaint(); }); });
+    menu.addItem("Reset sound", [this, lane] { owner_.resetPartSound(lane); });
     menu.addItem("Clear lane", [this, lane] {
         owner_.pushUndo();
         owner_.editPattern([lane](zd::Pattern& pat) {

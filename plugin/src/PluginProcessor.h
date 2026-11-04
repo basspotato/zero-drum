@@ -70,7 +70,8 @@ public:
     juce::File writeMidiClip(int lane) const;
     /// Renders one loop of the mix (through the bus, like playback) to a temp WAV for
     /// drag-and-drop into the DAW. Returns an invalid File on failure.
-    juce::File writeLoopWav() const;
+    /// `part` >= 0 renders just that part (the rest muted), for dragging one sound out as audio.
+    juce::File writeLoopWav(int part = -1) const;
 
     /// Tempo used for exports: the free-run tempo, else the host's last reported tempo.
     double exportBpm() const noexcept;
@@ -131,6 +132,19 @@ public:
     /// Lane tools: play the lane twice (its length doubles), or play it backwards.
     void doubleLane(int lane);
     void reverseLane(int lane);
+    /// Velocity ramp over the lane's hits: soft to loud (up) or loud to soft.
+    void rampLane(int lane, bool up);
+    /// Copy a lane, paste it onto any lane of any slot (keeps the target's straight flag off/on as copied).
+    void copyLane(int lane);
+    bool pasteLane(int lane);
+    bool hasLaneCopy() const;
+    /// The note a pitched step starts from when it has none: the 808's root, the kick's
+    /// tune as a note, middle C (as recorded) for sample pads; -1 for unpitched lanes.
+    int defaultNote(int lane) const noexcept;
+    /// Puts every sound parameter of the part back to its default.
+    void resetPartSound(int part);
+    /// Highest output sample level since the last call (for the Mix tab meter); resets it.
+    float takeOutputPeak() noexcept { return outputPeak_.exchange(0.0f, std::memory_order_relaxed); }
 
     /// Part names: a custom name, else the sample's file name, else the default.
     /// Empty resets. Saved with the session and in part files.
@@ -164,8 +178,8 @@ public:
 
     // ---- Pad samples: parts 6..16 (indices 5..15) play user samples (message thread) ----
     static constexpr int kFirstSamplePad = kNumStripParts;
-    static constexpr int kNumPadSuffixes = 8;
-    static constexpr const char* kPadSuffixes[kNumPadSuffixes] { "SmpPitch", "SmpDecay", "SmpStart", "Level", "Pan", "RevSend", "SmpReverse", "Choke" };
+    static constexpr int kNumPadSuffixes = 9;
+    static constexpr const char* kPadSuffixes[kNumPadSuffixes] { "SmpPitch", "SmpDecay", "SmpStart", "Level", "Pan", "RevSend", "SmpReverse", "Choke", "Vary" };
     static constexpr int kChokeGroups = 4; ///< pads in the same group cut each other off (open/closed hat style)
     static constexpr double kMaxSampleSeconds = 30.0;
     static bool isSamplePad(int part) noexcept { return part >= kFirstSamplePad && part < zd::kMaxParts; }
@@ -237,6 +251,8 @@ private:
     std::array<double, 4> taps_ {};                       ///< message thread
     int numTaps_ = 0;
     std::unique_ptr<zd::Pattern> slotCopy_;           ///< guarded by patternMutex_
+    std::unique_ptr<zd::Lane> laneCopy_;              ///< guarded by patternMutex_
+    std::atomic<float> outputPeak_ { 0.0f };
     std::atomic<std::uint32_t> muteMask_ { 0 }, soloMask_ { 0 };
     std::vector<zd::Pattern> undo_, redo_; ///< guarded by patternMutex_
     std::uint64_t humanizeCount_ = 0;      ///< guarded by patternMutex_

@@ -9,7 +9,7 @@
 /// The pattern as a grid: one row per default-kit lane and per pad with a sample, one cell per step. Click an empty
 /// cell to add a hit, click a hit to remove it, drag a hit up or down for velocity,
 /// right-click a hit to cycle its roll (1, 2, 3, 4 hits per step), Alt-drag for probability,
-/// Ctrl-drag (Cmd on a Mac) sideways for timing. Click a lane's name for its length,
+/// Ctrl-drag (Cmd on a Mac) sideways for timing, Shift-drag for pitch (kick, 808, sample pads). Click a lane's name for its length,
 /// Euclidean rhythms, shifting and humanize; M and S mute and solo it. The playhead follows the host, and every edit goes
 /// straight to the audio thread and into the saved state (with undo).
 class StepGrid final : public juce::Component, private juce::Timer
@@ -29,7 +29,7 @@ public:
 private:
     void timerCallback() override;
     void showLaneMenu(juce::Point<float> p);
-    enum class DragMode { Velocity, Probability, Timing };
+    enum class DragMode { Velocity, Probability, Timing, Pitch };
     int columns() const noexcept;
     int rows() const noexcept { return static_cast<int>(rows_.size()); }
     const zd::Lane& laneOfRow(int row) const noexcept { return pattern_.lanes[static_cast<std::size_t>(rows_[static_cast<std::size_t>(row)])]; }
@@ -57,5 +57,6 @@ private:
     int downLane_ = -1, downStep_ = -1;
     bool downWasOn_ = false, moved_ = false;
     float downVelocity_ = 0.0f, downProbability_ = 1.0f, downOffset_ = 0.0f;
+    int downNote_ = -1;
     DragMode dragMode_ = DragMode::Velocity;
 };

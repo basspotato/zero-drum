@@ -292,3 +292,44 @@ TEST_CASE("Names, tap tempo, choke groups and full level")
     set(*p, "padFullLevel", 1.0f);
     CHECK(p->fullLevelPads());
 }
+
+TEST_CASE("Lane copy and paste across slots, ramps, reset sound, one-part audio")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    auto p = std::make_unique<ZeroDrumProcessor>();
+    p->prepareToPlay(48000.0, 512);
+    const auto hat = p->currentPattern().lanes[2];
+    p->copyLane(2);
+    REQUIRE(p->hasLaneCopy());
+    p->selectSlot(1);
+    p->clearSlot(1);
+    REQUIRE(p->pasteLane(3)); // the hat rhythm onto the perc lane of slot B
+    const auto pasted = p->currentPattern().lanes[3];
+    CHECK(pasted.length == hat.length);
+    for (int s = 0; s < hat.length; ++s)
+        CHECK(pasted.steps[static_cast<std::size_t>(s)].on == hat.steps[static_cast<std::size_t>(s)].on);
+
+    p->rampLane(3, true);
+    const auto ramp = p->currentPattern().lanes[3];
+    CHECK(ramp.steps[0].velocity == doctest::Approx(0.3f));
+    CHECK(ramp.steps[static_cast<std::size_t>(ramp.length - 1)].velocity == doctest::Approx(1.0f));
+
+    set(*p, "kickTune", 80.0f);
+    set(*p, "p0Cutoff", 900.0f);
+    p->resetPartSound(0);
+    CHECK(plain(*p, "kickTune") == doctest::Approx(50.0f).epsilon(0.01));
+    CHECK(plain(*p, "p0Cutoff") != doctest::Approx(900.0f));
+
+    CHECK(p->defaultNote(4) == static_cast<int>(plain(*p, "genRoot")));
+    CHECK(p->defaultNote(9) == 60);
+    CHECK(p->defaultNote(2) == -1);
+
+    p->selectSlot(0);
+    const auto all = p->writeLoopWav();
+    REQUIRE(all.existsAsFile());
+    const auto allSize = all.getSize();
+    const auto kick = p->writeLoopWav(0);
+    REQUIRE(kick.existsAsFile());
+    CHECK(kick.getFileName().contains("Kick"));
+    CHECK(kick.getSize() == allSize); // same length, just one part in it
+}

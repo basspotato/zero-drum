@@ -75,7 +75,7 @@ double Sequencer::stepTimeIn(const Pattern& pattern, int lane, std::int64_t k) n
     const Lane& l = pattern.lanes[static_cast<std::size_t>(lane)];
     const Step& s = l.steps[static_cast<std::size_t>(k % l.length)];
     const double base = static_cast<double>(k) * pattern.stepBeats;
-    const double swingShift = (k % 2 != 0) ? (pattern.swing - 0.5) * 2.0 * pattern.stepBeats : 0.0;
+    const double swingShift = (k % 2 != 0 && !l.straight) ? (pattern.swing - 0.5) * 2.0 * pattern.stepBeats : 0.0;
     return base + swingShift + static_cast<double>(s.microOffset) * pattern.stepBeats;
 }
 

@@ -1,6 +1,7 @@
 #include "zd/Engine.h"
 
 #include "zd/dsp/Math.h"
+#include "zd/dsp/Random.h"
 
 #include <algorithm>
 #include <cmath>
@@ -130,7 +131,21 @@ void Part::triggerEngine(EngineType t, float velocity, float toneDrop, int note,
             SampleParams sp = sampleParams;
             if (sp.decay > 0.0f)
                 sp.decay *= decayScale;
-            sampleVoices_[idx].trigger(sample.get(), sp, velocity);
+            // A step's note plays the sample chromatically around middle C (60 = as recorded).
+            if (note >= 0)
+                sp.pitchSemitones += static_cast<float>(std::clamp(note, 0, 127) - 60);
+            float level = velocity;
+            if (sp.vary > 0.0f)
+            {
+                // Per-hit variation, like a drummer never hitting twice the same: up to
+                // +-0.35 semitones and -3 dB at full Vary. Seeded by the hit count.
+                const float vary = std::clamp(sp.vary, 0.0f, 1.0f);
+                const auto h = dsp::hash64(++hitCount_ * 0x9E3779B97F4A7C15ull + 0x5A3D);
+                const double r1 = dsp::hashToUnit(h), r2 = dsp::hashToUnit(dsp::hash64(h));
+                sp.pitchSemitones += static_cast<float>((2.0 * r1 - 1.0) * 0.35 * vary);
+                level *= static_cast<float>(1.0 - 0.3 * vary * r2);
+            }
+            sampleVoices_[idx].trigger(sample.get(), sp, level);
             break;
         }
         case EngineType::FmPerc:
@@ -182,6 +197,7 @@ void Part::reset() noexcept
     for (auto& v : subVoices_) v.reset();
     for (auto& v : clapVoices_) v.reset();
     strip_.reset();
+    hitCount_ = 0;
     lastSubHz_ = 0.0;
     duckLevel_ = 0.0;
     duckStart_ = 0.0;

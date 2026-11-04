@@ -155,7 +155,8 @@ void PadGrid::mouseDrag(const juce::MouseEvent& e)
         owner_.setNoteRepeat(-1, 1.0f);
         repeating_ = false;
     }
-    const auto file = owner_.writeMidiClip(pressed_);
+    // Alt-drag for the part's audio (one loop, just this sound); a plain drag gives MIDI.
+    const auto file = e.mods.isAltDown() ? owner_.writeLoopWav(pressed_) : owner_.writeMidiClip(pressed_);
     if (!file.existsAsFile())
         return;
     dragging_ = true;

@@ -30,6 +30,16 @@ std::vector<float> hit(Engine& e, int part)
     return l;
 }
 
+/// One hit, then silence until it has rung out; returns the hit's first block.
+std::vector<float> hit2(Engine& e, int part)
+{
+    auto first = hit(e, part);
+    std::vector<float> l(512), r(512);
+    for (int i = 0; i < 12; ++i)
+        e.process(Transport {}, nullptr, 0, l.data(), r.data(), 512);
+    return first;
+}
+
 } // namespace
 
 TEST_CASE("Samples: submitSample turns an empty pad into a sample part at the next block")
@@ -140,4 +150,30 @@ TEST_CASE("Samples: prepareOneShot trims silence, keeps the attack and normalize
     silent.samples.assign(1000, 0.0f);
     CHECK_FALSE(prepareOneShot(silent));
     CHECK(silent.samples.size() == 1000);
+}
+
+TEST_CASE("Samples: Vary changes each hit a little, the same way every time")
+{
+    auto render = [](float vary) {
+        auto e = std::make_unique<Engine>();
+        e->prepare(48000.0, 512);
+        e->setSample(9, click(0.5f, 4000));
+        e->part(9).type = EngineType::Sample;
+        e->part(9).sampleParams.vary = vary;
+        std::vector<float> peaks;
+        for (int hit = 0; hit < 6; ++hit)
+            peaks.push_back(static_cast<float>(test::peak(hit2(*e, 9))));
+        return peaks;
+    };
+    const auto still = render(0.0f);
+    const auto varied = render(1.0f);
+    for (float v : still)
+        CHECK(v == doctest::Approx(still[0]));
+    int differ = 0;
+    for (std::size_t i = 1; i < varied.size(); ++i)
+        differ += std::abs(varied[i] - varied[0]) > 1e-4f ? 1 : 0;
+    CHECK(differ >= 3);
+    for (float v : varied)
+        CHECK(v <= still[0] + 1e-6f);
+    CHECK(render(1.0f) == varied); // seeded
 }

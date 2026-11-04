@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "zd/Sequencer.h"
+#include "zd/PatternIO.h"
 #include "zd/export/Export.h"
 
 #include <algorithm>
@@ -217,4 +218,19 @@ TEST_CASE("Chain: probability draws afresh on every pass, the same at any block 
     REQUIRE(notes.size() == ref.size());
     for (std::size_t i = 0; i < notes.size(); ++i)
         CHECK(notes[i].tick == ref[i] / 6000 * (exporting::kMidiPpq / 4));
+}
+
+TEST_CASE("Straight lanes ignore the swing and survive a save")
+{
+    Pattern p {};
+    p.swing = 0.66;
+    p.lanes[0].steps[1].on = true;
+    p.lanes[2].steps[1].on = true;
+    p.lanes[0].straight = true;
+    CHECK(Sequencer::stepTimeIn(p, 0, 1) == doctest::Approx(0.25));
+    CHECK(Sequencer::stepTimeIn(p, 2, 1) > 0.3);
+    Pattern back {};
+    REQUIRE(deserializePattern(serializePattern(p), back));
+    CHECK(back.lanes[0].straight);
+    CHECK_FALSE(back.lanes[2].straight);
 }

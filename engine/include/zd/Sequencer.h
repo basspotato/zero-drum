@@ -24,6 +24,7 @@ struct Step
 struct Lane
 {
     int length = 16;
+    bool straight = false; ///< ignore the pattern's swing (a straight kick under swung hats)
     std::array<Step, kMaxStepsPerLane> steps {};
 };
 

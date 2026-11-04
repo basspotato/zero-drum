@@ -189,6 +189,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { id + "SmpReverse", 1 }, name + "Reverse", false));
         layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { id + "Choke", 1 }, name + "Choke Group",
                                                                 juce::StringArray { "Off", "1", "2", "3", "4" }, 0));
+        add("Vary", "Vary", Range { 0.0f, 1.0f }, 0.0f, "");
     }
 
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "midiOut", 1 }, "MIDI Out", true));
@@ -209,6 +210,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "repeatRate", 1 }, "Note Repeat Rate",
                                                             juce::StringArray { "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16T", "1/32T" }, 2));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "padFullLevel", 1 }, "Pads Full Level", false));
+    {
+        juce::StringArray channels;
+        for (int ch = 1; ch <= 16; ++ch)
+            channels.add(juce::String(ch));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "midiDrumChannel", 1 }, "MIDI Out Drum Channel",
+                                                                channels, kDrumMidiChannel - 1));
+    }
 
     return layout;
 }
@@ -306,6 +314,7 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
         part.mix.pan = pp[4]->load(std::memory_order_relaxed);
         part.mix.reverbSend = pp[5]->load(std::memory_order_relaxed);
         part.sampleParams.reverse = pp[6]->load(std::memory_order_relaxed) > 0.5f;
+        part.sampleParams.vary = pp[8]->load(std::memory_order_relaxed);
     }
     // Choke groups: a pad cuts off every other pad in its group.
     std::array<int, zd::kMaxParts> group {};
@@ -474,6 +483,15 @@ void ZeroDrumProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
     float* left = buffer.getWritePointer(0);
     float* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : left;
     engine_.process(transport, midiEvents_.data(), numEvents, left, right, numSamples);
+    {
+        float peak = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+            peak = std::max(peak, std::max(std::abs(left[i]), std::abs(right[i])));
+        float seen = outputPeak_.load(std::memory_order_relaxed);
+        while (peak > seen && !outputPeak_.compare_exchange_weak(seen, peak, std::memory_order_relaxed))
+        {
+        }
+    }
     writeMidiOut(midi, numSamples, transport.playing);
 }
 
@@ -510,7 +528,7 @@ void ZeroDrumProcessor::writeMidiOut(juce::MidiBuffer& midi, int numSamples, boo
         const auto& e = events[i];
         if (((audible >> e.part) & 1u) == 0)
             continue; // muted or not soloed
-        int channel = kDrumMidiChannel; // GM drums, as in the dragged and exported MIDI
+        int channel = static_cast<int>(value("midiDrumChannel")) + 1; // GM drums (10) by default, as in the exported MIDI
         int note = zd::exporting::defaultMidiNote(e.part);
         if (e.part == 4)
         {
@@ -889,6 +907,78 @@ void ZeroDrumProcessor::reverseLane(int lane)
     });
 }
 
+int ZeroDrumProcessor::defaultNote(int lane) const noexcept
+{
+    if (lane == 4)
+        return static_cast<int>(value("genRoot"));
+    if (lane == 0)
+        return juce::jlimit(0, 127, static_cast<int>(std::lround(69.0 + 12.0 * std::log2(value("kickTune") / 440.0))));
+    if (isSamplePad(lane))
+        return 60;
+    return -1;
+}
+
+void ZeroDrumProcessor::rampLane(int lane, bool up)
+{
+    if (lane < 0 || lane >= zd::kMaxParts)
+        return;
+    pushUndo();
+    editPattern([lane, up](zd::Pattern& pat) {
+        auto& l = pat.lanes[static_cast<std::size_t>(lane)];
+        const int n = juce::jlimit(0, zd::kMaxStepsPerLane, l.length);
+        for (int i = 0; i < n; ++i)
+        {
+            const float t = n > 1 ? static_cast<float>(i) / static_cast<float>(n - 1) : 1.0f;
+            l.steps[static_cast<std::size_t>(i)].velocity = 0.3f + 0.7f * (up ? t : 1.0f - t);
+        }
+    });
+}
+
+void ZeroDrumProcessor::copyLane(int lane)
+{
+    if (lane < 0 || lane >= zd::kMaxParts)
+        return;
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    laneCopy_ = std::make_unique<zd::Lane>(uiPattern_.lanes[static_cast<std::size_t>(lane)]);
+}
+
+bool ZeroDrumProcessor::pasteLane(int lane)
+{
+    if (lane < 0 || lane >= zd::kMaxParts)
+        return false;
+    zd::Lane copy;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        if (laneCopy_ == nullptr)
+            return false;
+        copy = *laneCopy_;
+    }
+    if (lane >= 1 && lane <= 3)
+        for (auto& st : copy.steps)
+            st.note = -1; // snare, hat and perc play no notes
+    pushUndo();
+    editPattern([lane, &copy](zd::Pattern& pat) { pat.lanes[static_cast<std::size_t>(lane)] = copy; });
+    return true;
+}
+
+bool ZeroDrumProcessor::hasLaneCopy() const
+{
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    return laneCopy_ != nullptr;
+}
+
+void ZeroDrumProcessor::resetPartSound(int part)
+{
+    for (const auto& idStd : paramIds_)
+    {
+        const juce::String id(idStd);
+        if (partOfParam(id) != part || id.startsWith("lock"))
+            continue;
+        if (auto* param = apvts_.getParameter(id))
+            param->setValueNotifyingHost(param->getDefaultValue());
+    }
+}
+
 void ZeroDrumProcessor::setPartName(int part, const juce::String& name)
 {
     if (part >= 0 && part < zd::kMaxParts)
@@ -1165,10 +1255,13 @@ std::shared_ptr<zd::Engine> ZeroDrumProcessor::makeExportEngine() const
     return engine;
 }
 
-juce::File ZeroDrumProcessor::writeLoopWav() const
+juce::File ZeroDrumProcessor::writeLoopWav(int part) const
 {
     // A few bars render in well under a second, so this runs right on the message thread.
     auto engine = makeExportEngine();
+    if (part >= 0 && part < zd::kMaxParts)
+        for (int i = 0; i < zd::kMaxParts; ++i)
+            engine->part(i).mix.mute = i != part; // just this part, even if it is muted in the session
     zd::exporting::ExportOptions options;
     options.bpm = exportBpm();
     options.bars = zd::exporting::loopBars(engine->sequencer());
@@ -1180,7 +1273,8 @@ juce::File ZeroDrumProcessor::writeLoopWav() const
     const auto result = zd::exporting::exportLoop(*engine, options, toPath(work));
     if (!result.ok)
         return {};
-    const auto file = dir.getChildFile("Zero Drum Loop " + juce::String(juce::roundToInt(options.bpm)) + " BPM.wav");
+    const juce::String what = part >= 0 ? padName(part) : juce::String("Loop");
+    const auto file = dir.getChildFile("Zero Drum " + juce::File::createLegalFileName(what) + " " + juce::String(juce::roundToInt(options.bpm)) + " BPM.wav");
     file.deleteFile();
     return work.getChildFile("mix.wav").moveFileTo(file) ? file : juce::File {};
 }

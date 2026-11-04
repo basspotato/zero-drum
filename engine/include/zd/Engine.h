@@ -100,6 +100,7 @@ private:
     std::vector<float> scratch_;
     unsigned ageCounter_ = 0;
     std::int64_t samplesSinceTrigger_ = 0;
+    std::uint64_t hitCount_ = 0; ///< seeds per-hit sample variation; counts hits in order, so block size never matters
     double lastSubHz_ = 0.0;
 
     /// Advances the duck envelope one sample and returns the gain to apply.

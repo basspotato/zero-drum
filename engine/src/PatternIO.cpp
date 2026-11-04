@@ -21,9 +21,11 @@ std::string serializePattern(const Pattern& p)
         const Lane& l = p.lanes[static_cast<std::size_t>(lane)];
         const bool any = std::any_of(l.steps.begin(), l.steps.begin() + std::clamp(l.length, 0, kMaxStepsPerLane),
                                      [](const Step& s) { return s.on; });
-        if (!any && l.length == 16)
+        if (!any && l.length == 16 && !l.straight)
             continue; // default, empty lane
         os << "lane " << lane << " " << l.length << "\n";
+        if (l.straight)
+            os << "straight\n";
         for (int i = 0; i < std::clamp(l.length, 0, kMaxStepsPerLane); ++i)
         {
             const Step& s = l.steps[static_cast<std::size_t>(i)];
@@ -71,6 +73,12 @@ bool deserializePattern(std::string_view text, Pattern& out)
                 return false;
             current = &p.lanes[static_cast<std::size_t>(index)];
             current->length = length;
+        }
+        else if (word == "straight")
+        {
+            if (current == nullptr)
+                return false;
+            current->straight = true;
         }
         else if (word == "step")
         {

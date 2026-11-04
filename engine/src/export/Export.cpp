@@ -176,7 +176,9 @@ void realizePass(const Sequencer& seq, const Pattern& p, int lane, long long fir
             MidiNote n;
             n.tick = std::max(0, static_cast<int>(std::lround(beat * kMidiPpq)));
             n.lengthTicks = std::max(1, static_cast<int>(std::lround(spacing * kMidiPpq * 0.9)));
-            n.note = s.note >= 0 ? s.note : defaultNote;
+            // Only the kick (melodic) and the 808 lanes carry their own notes; a sample pad's
+            // pitch stays inside the plugin so the note still says which pad plays.
+            n.note = s.note >= 0 && (lane == 0 || lane == 4) ? s.note : defaultNote;
             const float velocity = r == 0 ? s.velocity : s.velocity * 0.8f;
             n.velocity = std::clamp(static_cast<int>(std::lround(velocity * 127.0f)), 1, 127);
             notes.push_back(n);

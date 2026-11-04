@@ -8,7 +8,7 @@ MidiDragChip::MidiDragChip(ZeroDrumProcessor& owner, int lane, juce::String labe
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
     setTooltip(lane == kAudioLoop ? "Drag the loop into your DAW as audio (WAV, through the bus)"
                : lane < 0         ? "Drag the whole beat into your DAW as a MIDI clip"
-                                  : "Drag the " + label_ + " lane into your DAW as a MIDI clip");
+                                  : "Drag the " + label_ + " lane into your DAW as a MIDI clip (Alt-drag: as audio)");
 }
 
 void MidiDragChip::paint(juce::Graphics& g)
@@ -25,7 +25,10 @@ void MidiDragChip::mouseDrag(const juce::MouseEvent& e)
 {
     if (dragging_ || e.getDistanceFromDragStart() < 6)
         return;
-    const auto file = lane_ == kAudioLoop ? owner_.writeLoopWav() : owner_.writeMidiClip(lane_);
+    // Alt-drag a part chip for its audio instead of its MIDI.
+    const auto file = lane_ == kAudioLoop ? owner_.writeLoopWav()
+                      : e.mods.isAltDown() ? owner_.writeLoopWav(lane_)
+                                           : owner_.writeMidiClip(lane_);
     if (!file.existsAsFile())
         return;
     dragging_ = true;
@@ -366,6 +369,13 @@ bool ZeroDrumEditor::keyPressed(const juce::KeyPress& key)
     if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Y')
         return owner_.redo();
     // 1..4 pick pattern slots A..D.
+    // Space starts and stops the standalone (its free-running clock); in a DAW the host owns play.
+    if (key == juce::KeyPress::spaceKey && owner_.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        if (auto* run = owner_.state().getParameter("freeRun"))
+            run->setValueNotifyingHost(run->getValue() > 0.5f ? 0.0f : 1.0f);
+        return true;
+    }
     if (!key.getModifiers().isAnyModifierKeyDown() && key.getKeyCode() >= '1' && key.getKeyCode() < '1' + zd::kMaxChain)
     {
         selectSlot(key.getKeyCode() - '1');
