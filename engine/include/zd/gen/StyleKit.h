@@ -40,6 +40,8 @@ struct StyleKit
     /// The shared reverb and each part's send (0 = dry).
     dsp::ReverbSettings reverb {};
     std::array<float, 5> reverbSend {};
+    /// The bus glue compressor (on for every style, set per genre).
+    dsp::GlueSettings glue {};
 };
 
 StyleKit styleKit(Style style) noexcept;

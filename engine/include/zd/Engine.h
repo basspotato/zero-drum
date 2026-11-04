@@ -10,6 +10,7 @@
 #include "zd/engines/Sub808.h"
 #include "zd/engines/Clap.h"
 #include "zd/dsp/Clipper.h"
+#include "zd/dsp/Glue.h"
 #include "zd/dsp/Reverb.h"
 
 #include <algorithm>
@@ -175,6 +176,13 @@ public:
     void setReverb(const dsp::ReverbSettings& settings) noexcept { reverbSettings_ = settings; reverb_.set(settings); }
     const dsp::ReverbSettings& reverb() const noexcept { return reverbSettings_; }
 
+    /// The glue compressor on the whole drum bus, after the reverb return and before the
+    /// master gain and clipper. Off by default. Realtime safe.
+    void setGlue(const dsp::GlueSettings& settings) noexcept { glue_.set(settings); }
+    const dsp::GlueSettings& glue() const noexcept { return glue_.settings(); }
+    /// Current glue gain reduction in dB, for a meter. Relaxed atomic, written per block.
+    float glueReductionDb() const noexcept { return glueReduction_.load(std::memory_order_relaxed); }
+
 private:
     void renderParts(float* left, float* right, float* send, int from, int to) noexcept;
     void applyPendingPattern() noexcept;
@@ -195,6 +203,8 @@ private:
     dsp::Reverb reverb_;
     dsp::ReverbSettings reverbSettings_ {};
     std::vector<float> send_;
+    dsp::GlueCompressor glue_;
+    std::atomic<float> glueReduction_ { 0.0f };
     std::array<std::atomic<std::uint32_t>, kMaxParts> hitCounts_ {};
 };
 

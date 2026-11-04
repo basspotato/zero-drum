@@ -189,6 +189,36 @@ constexpr std::array<RoomRow, static_cast<std::size_t>(Style::kCount)> kRooms { 
     { 1.4f, 0.7f, 20, 8000, 400, 0.0f, 0.25f, 0.05f, 0.15f }, // Festival
 } };
 
+// Bus glue per style, in Style order: threshold dB, ratio, attack ms, release ms, makeup dB,
+// mix. Slow attacks (10-30 ms) keep the kick and snare transients and pull the tails and
+// room up between hits. Boom bap gets a slower, harder squeeze (the sampled-break sound);
+// house, techno and garage pump a little with the groove; the big-room styles get a firm
+// 4:1; trap and drill stay light so the 808 keeps its punch. Parallel mix below 1 keeps
+// the dry transient on top.
+struct GlueRow
+{
+    float thresholdDb, ratio, attackMs, releaseMs, makeupDb, mix;
+};
+constexpr std::array<GlueRow, static_cast<std::size_t>(Style::kCount)> kGlue { {
+    { -14, 2.0f, 20, 120, 1.0f, 0.8f }, // Trap
+    { -14, 2.0f, 20, 120, 1.0f, 0.8f }, // Drill
+    { -18, 4.0f, 30, 200, 2.0f, 0.7f }, // Boom bap
+    { -16, 3.0f, 10, 150, 1.5f, 1.0f }, // House
+    { -16, 3.0f, 10, 150, 1.5f, 1.0f }, // Techno
+    { -16, 3.0f, 10, 120, 1.5f, 0.9f }, // UK garage
+    { -16, 3.0f, 3, 80, 1.5f, 0.8f },   // Drum and bass
+    { -14, 2.0f, 20, 120, 1.0f, 0.8f }, // Afrobeats
+    { -14, 2.0f, 20, 150, 1.0f, 0.8f }, // Amapiano
+    { -14, 2.0f, 10, 100, 1.0f, 0.8f }, // Jersey club
+    { -14, 2.0f, 20, 120, 1.0f, 0.8f }, // Reggaeton
+    { -16, 3.0f, 15, 150, 1.5f, 0.9f }, // Pop
+    { -18, 3.0f, 30, 200, 2.0f, 0.7f }, // Hip-hop
+    { -16, 4.0f, 10, 120, 1.5f, 0.9f }, // Dubstep
+    { -16, 3.0f, 10, 150, 1.5f, 1.0f }, // Trance
+    { -16, 4.0f, 10, 120, 1.5f, 1.0f }, // Hardstyle
+    { -16, 4.0f, 10, 150, 1.5f, 1.0f }, // Festival
+} };
+
 } // namespace
 
 StyleKit styleKit(Style style) noexcept
@@ -291,6 +321,8 @@ StyleKit styleKit(Style style) noexcept
     k.reverb.dampingHz = room.dampingHz;
     k.reverb.highPassHz = room.highPassHz;
     k.reverbSend = { room.kick, room.snare, room.hat, room.perc, 0.0f };
+    const GlueRow& g = kGlue[static_cast<std::size_t>(index)];
+    k.glue = dsp::GlueSettings { true, g.thresholdDb, g.ratio, g.attackMs, g.releaseMs, g.makeupDb, g.mix, 90.0f };
     return k;
 }
 
@@ -341,6 +373,7 @@ void applyKit(const StyleKit& kit, Engine& engine, int rootNote, std::uint32_t s
             engine.part(i).mix.reverbSend = kit.reverbSend[static_cast<std::size_t>(i)];
         }
     engine.setReverb(kit.reverb);
+    engine.setGlue(kit.glue);
     if (!skip(4))
         engine.part(4).chokes = kit.subCutsKick ? 1u : 0u;
 }

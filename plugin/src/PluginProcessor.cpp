@@ -149,6 +149,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     layout.add(floatParam("revDamping", "Reverb Damping", skewed(500.0f, 20000.0f, 5000.0f), 7000.0f, "Hz"));
     layout.add(floatParam("revHighPass", "Reverb High-pass", skewed(20.0f, 2000.0f, 300.0f), 400.0f, "Hz"));
     layout.add(floatParam("revLevel", "Reverb Level", Range { -24.0f, 6.0f }, 0.0f, "dB"));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "glueOn", 1 }, "Glue", true));
+    layout.add(floatParam("glueThreshold", "Glue Threshold", Range { -40.0f, 0.0f }, -14.0f, "dB"));
+    layout.add(floatParam("glueRatio", "Glue Ratio", skewed(1.0f, 10.0f, 3.0f), 2.0f, ":1"));
+    layout.add(floatParam("glueAttack", "Glue Attack", skewed(0.1f, 100.0f, 10.0f), 20.0f, "ms"));
+    layout.add(floatParam("glueRelease", "Glue Release", skewed(10.0f, 1200.0f, 150.0f), 120.0f, "ms"));
+    layout.add(floatParam("glueMakeup", "Glue Makeup", Range { 0.0f, 12.0f }, 1.0f, "dB"));
+    layout.add(floatParam("glueMix", "Glue Mix", Range { 0.0f, 1.0f }, 0.8f));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "kickCutsSub", 1 }, "Kick Cuts 808", false));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID { "genRoot", 1 }, "808 Root Note", 24, 47, 33));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "genKit", 1 }, "Load Style Kit", true));
@@ -262,6 +269,15 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
     rv.highPassHz = value("revHighPass");
     rv.returnDb = value("revLevel");
     engine.setReverb(rv);
+    zd::dsp::GlueSettings glue;
+    glue.on = value("glueOn") > 0.5f;
+    glue.thresholdDb = value("glueThreshold");
+    glue.ratio = value("glueRatio");
+    glue.attackMs = value("glueAttack");
+    glue.releaseMs = value("glueRelease");
+    glue.makeupDb = value("glueMakeup");
+    glue.mix = value("glueMix");
+    engine.setGlue(glue);
     engine.part(4).chokes = value("subCutsKick") > 0.5f ? 1u : 0u;
     engine.part(0).chokes = value("kickCutsSub") > 0.5f ? (1u << 4) : 0u;
 
@@ -638,6 +654,13 @@ void ZeroDrumProcessor::loadStyleKit(zd::gen::Style style, int rootNote, std::ui
     setParam("revDamping", kit.reverb.dampingHz);
     setParam("revHighPass", kit.reverb.highPassHz);
     setParam("revLevel", kit.reverb.returnDb);
+    setParam("glueOn", kit.glue.on ? 1.0f : 0.0f);
+    setParam("glueThreshold", kit.glue.thresholdDb);
+    setParam("glueRatio", kit.glue.ratio);
+    setParam("glueAttack", kit.glue.attackMs);
+    setParam("glueRelease", kit.glue.releaseMs);
+    setParam("glueMakeup", kit.glue.makeupDb);
+    setParam("glueMix", kit.glue.mix);
     if (!keep(4))
         setParam("subCutsKick", kit.subCutsKick ? 1.0f : 0.0f);
 }

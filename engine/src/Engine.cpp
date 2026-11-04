@@ -285,6 +285,7 @@ void Engine::prepare(double sampleRate, int maxBlockSize)
     send_.assign(static_cast<std::size_t>(std::max(maxBlockSize, 1)), 0.0f);
     reverb_.prepare(sampleRate);
     reverb_.set(reverbSettings_);
+    glue_.prepare(sampleRate);
 }
 
 void Engine::reset() noexcept
@@ -293,6 +294,7 @@ void Engine::reset() noexcept
         p.reset();
     clipper_.reset();
     reverb_.reset();
+    glue_.reset();
 }
 
 void Engine::setSample(int partIndex, SampleDataPtr sample)
@@ -403,6 +405,8 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
     }
     renderParts(left, right, send, position, numSamples);
     reverb_.process(send, left, right, numSamples);
+    glue_.process(left, right, numSamples);
+    glueReduction_.store(static_cast<float>(glue_.gainReductionDb()), std::memory_order_relaxed);
 
     if (masterGain_ != 1.0f)
         for (int n = 0; n < numSamples; ++n)
