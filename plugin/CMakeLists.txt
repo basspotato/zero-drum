@@ -20,7 +20,9 @@ clap_juce_extensions_plugin(TARGET ZeroDrum
 
 target_sources(ZeroDrum PRIVATE
     src/PluginProcessor.cpp
-    src/PluginEditor.cpp)
+    src/PluginEditor.cpp
+    src/PadGrid.cpp
+    src/StepGrid.cpp)
 
 target_compile_definitions(ZeroDrum PUBLIC
     JUCE_WEB_BROWSER=0

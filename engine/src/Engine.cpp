@@ -394,6 +394,8 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
                 if (p != e.part && ((cuts >> p) & 1u) != 0)
                     parts_[static_cast<std::size_t>(p)].choke();
         parts_[static_cast<std::size_t>(e.part)].trigger(e.velocity, e.note);
+        auto& hits = hitCounts_[static_cast<std::size_t>(e.part)];
+        hits.store(hits.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
         if (e.part == kDuckSourcePart)
             for (int p = 0; p < kMaxParts; ++p)
                 if (p != kDuckSourcePart && parts_[static_cast<std::size_t>(p)].mix.duck > 0.0f)

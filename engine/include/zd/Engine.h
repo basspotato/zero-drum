@@ -12,6 +12,7 @@
 #include "zd/dsp/Clipper.h"
 #include "zd/dsp/Reverb.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <vector>
@@ -164,6 +165,13 @@ public:
 
     /// The shared reverb that every part's reverbSend feeds. Its return joins the mix before
     /// the master gain. Realtime safe.
+    /// How many times each part has been triggered (sequencer and external hits). Written by
+    /// the audio thread, read by the UI for pad flashes; relaxed atomics, never locks.
+    std::uint32_t hitCount(int part) const noexcept
+    {
+        return hitCounts_[static_cast<std::size_t>(std::clamp(part, 0, kMaxParts - 1))].load(std::memory_order_relaxed);
+    }
+
     void setReverb(const dsp::ReverbSettings& settings) noexcept { reverbSettings_ = settings; reverb_.set(settings); }
     const dsp::ReverbSettings& reverb() const noexcept { return reverbSettings_; }
 
@@ -187,6 +195,7 @@ private:
     dsp::Reverb reverb_;
     dsp::ReverbSettings reverbSettings_ {};
     std::vector<float> send_;
+    std::array<std::atomic<std::uint32_t>, kMaxParts> hitCounts_ {};
 };
 
 /// Free-running clock for the standalone app and tests: advances a sample counter and

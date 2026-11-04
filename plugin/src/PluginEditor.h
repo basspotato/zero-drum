@@ -1,13 +1,15 @@
 #pragma once
 
+#include "PadGrid.h"
 #include "PluginProcessor.h"
+#include "StepGrid.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
-/// Phase 1 editor: a generator bar (style, Generate, Mutate, Fill, Export, Drag MIDI) over the generic
-/// parameter editor. Audition parts with MIDI notes 36/38/42, the 808 on MIDI channel 2.
-/// The GPU-drawn pattern grid replaces the generic editor later in Phase 1.
+/// Phase 1 editor: a generator bar (style, Generate, Mutate, Fill, Build, Export, Drag MIDI)
+/// over three tabs: Beat (the step grid), Pads (4x4 pads with the selected part's controls)
+/// and Sound (every parameter).
 /// A chip you drag out of the plugin to drop a MIDI clip on a DAW track. `lane` -1 = whole beat.
 class MidiDragChip final : public juce::Component, public juce::SettableTooltipClient
 {
@@ -22,6 +24,44 @@ private:
     int lane_;
     juce::String label_;
     bool dragging_ = false;
+};
+
+/// A plain container that lays out its children through a callback.
+class LayoutComponent final : public juce::Component
+{
+public:
+    std::function<void()> onResize;
+    void resized() override
+    {
+        if (onResize)
+            onResize();
+    }
+};
+
+/// The selected pad's main controls: strip, velocity to tone and reverb send.
+class PartPanel final : public juce::Component
+{
+public:
+    explicit PartPanel(ZeroDrumProcessor& owner);
+    void showPart(int part);
+    void paint(juce::Graphics&) override;
+    void resized() override;
+
+private:
+    struct Knob
+    {
+        juce::Slider slider { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
+        juce::Label caption;
+        std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
+    };
+    static constexpr int kKnobs = 6;
+    static constexpr const char* kSuffixes[kKnobs] { "Attack", "Sustain", "Cutoff", "StripDrive", "VelTone", "RevSend" };
+    static constexpr const char* kLabels[kKnobs] { "Attack", "Sustain", "Cutoff", "Drive", "Vel > Tone", "Reverb" };
+    ZeroDrumProcessor& owner_;
+    int part_ = 0;
+    std::array<Knob, kKnobs> knobs_;
+    juce::ToggleButton crush_ { "Crush" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> crushAttachment_;
 };
 
 class ZeroDrumEditor final : public juce::AudioProcessorEditor, public juce::DragAndDropContainer, private juce::Timer
@@ -46,6 +86,12 @@ private:
     juce::Label summary_;
     juce::TooltipWindow tooltips_ { this };
     juce::GenericAudioProcessorEditor generic_;
+    StepGrid steps_;
+    LayoutComponent padsPage_;
+    PadGrid pads_;
+    PartPanel partPanel_;
+    juce::Label padHint_;
+    juce::TabbedComponent tabs_ { juce::TabbedButtonBar::TabsAtTop };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ZeroDrumEditor)
 };

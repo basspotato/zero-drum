@@ -71,6 +71,21 @@ public:
     /// Tempo used for exports: the free-run tempo, else the host's last reported tempo.
     double exportBpm() const noexcept;
 
+    // ---- Pads and step grid (message thread) ----
+    /// Plays a part once, as soon as the audio thread runs its next block. Lock-free.
+    void auditionPart(int part, float velocity) noexcept;
+    /// Note repeat: plays `part` on every 16th (synced to the host, or free-running when
+    /// stopped) until called with part -1.
+    void setNoteRepeat(int part, float velocity) noexcept;
+    std::uint32_t partHits(int part) const noexcept { return engine_.hitCount(part); }
+    /// A copy of the pattern the UI edits, and an edit that is applied, saved and sent to
+    /// the audio thread.
+    zd::Pattern currentPattern() const;
+    void editPattern(const std::function<void(zd::Pattern&)>& edit);
+    /// Where the audio thread last was, in beats, and whether the transport runs.
+    double playheadBeats() const noexcept { return playheadBeats_.load(std::memory_order_relaxed); }
+    bool isTransportRunning() const noexcept { return transportRunning_.load(std::memory_order_relaxed); }
+
     /// Maps a MIDI note to a part: GM kick/snare/closed hat on 36/38/42, else 36..51 -> parts 0..15.
     static int noteToPart(int note) noexcept;
 
@@ -115,6 +130,16 @@ private:
     std::uint64_t seed_ = 1;
 
     std::atomic<double> hostBpm_ { 120.0 };
+
+    // Pad auditions: single-producer (message thread), single-consumer (audio thread) ring.
+    static constexpr int kAuditionSlots = 64;
+    std::array<zd::NoteEvent, kAuditionSlots> auditions_ {};
+    std::atomic<int> auditionWrite_ { 0 }, auditionRead_ { 0 };
+    std::atomic<int> repeatPart_ { -1 };
+    std::atomic<float> repeatVelocity_ { 1.0f };
+    double repeatClock_ = 0.0; ///< beats, audio thread only: note repeat while the transport is stopped
+    std::atomic<double> playheadBeats_ { 0.0 };
+    std::atomic<bool> transportRunning_ { false };
     std::atomic<bool> exporting_ { false };
     juce::ThreadPool exportPool_ { juce::ThreadPoolOptions {}.withThreadName("Zero Drum export").withNumberOfThreads(1) };
 

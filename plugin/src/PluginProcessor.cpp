@@ -363,9 +363,64 @@ void ZeroDrumProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         }
     }
 
+    // Pad auditions from the UI land at the start of this block.
+    for (int r = auditionRead_.load(std::memory_order_relaxed); r != auditionWrite_.load(std::memory_order_acquire);
+         r = (r + 1) % kAuditionSlots)
+    {
+        if (numEvents < static_cast<int>(midiEvents_.size()))
+            midiEvents_[static_cast<std::size_t>(numEvents++)] = auditions_[static_cast<std::size_t>(r)];
+        auditionRead_.store((r + 1) % kAuditionSlots, std::memory_order_release);
+    }
+
+    // Note repeat on the 16th grid: the host's grid while it plays, our own clock otherwise.
+    const double spb = getSampleRate() * 60.0 / juce::jmax(20.0, transport.bpm);
+    const double startBeats = transport.playing ? transport.ppqPosition : repeatClock_;
+    const double endBeats = startBeats + numSamples / spb;
+    if (const int part = repeatPart_.load(std::memory_order_relaxed); part >= 0)
+        for (double t = std::ceil(startBeats / 0.25) * 0.25; t < endBeats && numEvents < static_cast<int>(midiEvents_.size()); t += 0.25)
+            midiEvents_[static_cast<std::size_t>(numEvents++)] = {
+                juce::jlimit(0, numSamples - 1, static_cast<int>(std::lround((t - startBeats) * spb))), part,
+                repeatVelocity_.load(std::memory_order_relaxed), -1 };
+    repeatClock_ = transport.playing ? endBeats : (repeatPart_.load(std::memory_order_relaxed) >= 0 ? endBeats : 0.0);
+    playheadBeats_.store(transport.ppqPosition, std::memory_order_relaxed);
+    transportRunning_.store(transport.playing, std::memory_order_relaxed);
+
     float* left = buffer.getWritePointer(0);
     float* right = buffer.getNumChannels() > 1 ? buffer.getWritePointer(1) : left;
     engine_.process(transport, midiEvents_.data(), numEvents, left, right, numSamples);
+}
+
+void ZeroDrumProcessor::auditionPart(int part, float velocity) noexcept
+{
+    const int w = auditionWrite_.load(std::memory_order_relaxed);
+    const int next = (w + 1) % kAuditionSlots;
+    if (next == auditionRead_.load(std::memory_order_acquire))
+        return; // full: drop the hit rather than block
+    auditions_[static_cast<std::size_t>(w)] = { 0, juce::jlimit(0, zd::kMaxParts - 1, part), juce::jlimit(0.05f, 1.0f, velocity), -1 };
+    auditionWrite_.store(next, std::memory_order_release);
+}
+
+void ZeroDrumProcessor::setNoteRepeat(int part, float velocity) noexcept
+{
+    repeatVelocity_.store(juce::jlimit(0.05f, 1.0f, velocity), std::memory_order_relaxed);
+    repeatPart_.store(part, std::memory_order_relaxed);
+}
+
+zd::Pattern ZeroDrumProcessor::currentPattern() const
+{
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    return uiPattern_;
+}
+
+void ZeroDrumProcessor::editPattern(const std::function<void(zd::Pattern&)>& edit)
+{
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        edit(uiPattern_);
+        next = uiPattern_;
+    }
+    publishPattern(next);
 }
 
 // ------------------------------------------------------------------------------- export
