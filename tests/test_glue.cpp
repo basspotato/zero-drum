@@ -176,3 +176,39 @@ TEST_CASE("Glue: every style kit turns it on and stays under 0 dBFS")
         CHECK(e->glue().ratio == kit.glue.ratio);
     }
 }
+
+TEST_CASE("Kit: kick and 808 start at zero phase on the same sample, so they add up")
+{
+    // The Kit Bible's lock: on a shared hit the kick body and the 808 both start at phase
+    // zero, so their first cycle reinforces instead of cancelling.
+    auto render = [](bool kick, bool sub) {
+        auto e = std::make_unique<Engine>();
+        e->prepare(kSr, 512);
+        loadDefaultKit(*e);
+        const auto kit = gen::styleKit(gen::Style::Trap);
+        gen::applyKit(kit, *e, kit.rootNote);
+        e->setGlue(GlueSettings {}); // compare the raw sum
+        e->setReverb(dsp::ReverbSettings { 1.0f, 0.5f, 10.0f, 7000.0f, 400.0f, -96.0f });
+        std::array<NoteEvent, 2> evs {};
+        int n = 0;
+        if (kick)
+            evs[static_cast<std::size_t>(n++)] = { 100, 0, 1.0f, -1 };
+        if (sub)
+            evs[static_cast<std::size_t>(n++)] = { 100, 4, 1.0f, -1 };
+        std::vector<float> l(4096), r(4096);
+        e->process(Transport {}, evs.data(), n, l.data(), r.data(), 4096);
+        return l;
+    };
+    const auto k = render(true, false);
+    const auto s = render(false, true);
+    const auto both = render(true, true);
+    // Both rise from zero together: through the kick's first half cycle (about 1 ms, after
+    // the click's first few samples) kick and 808 have the same sign, so they reinforce.
+    bool together = true;
+    for (int i = 108; i < 148; ++i)
+        together = together && k[static_cast<std::size_t>(i)] > 0.0f && s[static_cast<std::size_t>(i)] > 0.0f;
+    CHECK(together);
+    // Nothing before the hit, and the layered hit really is louder than either alone.
+    CHECK(test::peak(std::vector<float>(both.begin(), both.begin() + 100)) == 0.0);
+    CHECK(test::peak(both) > std::max(test::peak(k), test::peak(s)));
+}
