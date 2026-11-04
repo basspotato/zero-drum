@@ -429,6 +429,7 @@ void generate(const GenerateParams& p, Pattern& pattern) noexcept
 
     pattern.stepBeats = 0.25;
     pattern.swing = 0.5 + (style.swing - 0.5) * static_cast<double>(std::clamp(p.groove, 0.0f, 1.0f));
+    pattern.sweep = Sweep {}; // a fresh beat drops any build sweep
 
     for (int role = 0; role < kNumRoles; ++role)
     {
@@ -518,6 +519,8 @@ void makeBuild(Pattern& pattern, int bars, std::uint32_t lockMask) noexcept
 {
     const int n = std::clamp(bars, 1, kMaxStepsPerLane / kSteps) * kSteps;
     const int breath = n >= 2 * kSteps ? 2 : 0; // an 8th of silence before the drop
+    // The whole bus thins out with a rising high-pass over the build, back to full at the drop.
+    pattern.sweep = Sweep { n, 30.0f, 1500.0f, 0.5f };
     for (int role = 0; role < kNumRoles; ++role)
     {
         if (locked(lockMask, role))

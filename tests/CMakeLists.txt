@@ -14,7 +14,8 @@ add_executable(zd_tests
     test_reverb.cpp
     test_melodic_kick.cpp
     test_glue.cpp
-    test_samples.cpp)
+    test_samples.cpp
+    test_sweep.cpp)
 
 find_package(Threads REQUIRED)
 target_link_libraries(zd_tests PRIVATE zd_engine doctest::doctest Threads::Threads)

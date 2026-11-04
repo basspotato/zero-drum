@@ -27,11 +27,23 @@ struct Lane
     std::array<Step, kMaxStepsPerLane> steps {};
 };
 
+/// A high-pass sweep over the whole drum bus, tied to the song position: over `steps` steps
+/// the cutoff rises from startHz to endHz, then it starts over. The Build button sets one,
+/// so the build thins out into the drop. steps 0 = off (the bus is untouched).
+struct Sweep
+{
+    int steps = 0;
+    float startHz = 30.0f;
+    float endHz = 1500.0f;
+    float resonance = 0.5f; ///< 0..1: a little peak at the cutoff makes the rise audible
+};
+
 struct Pattern
 {
     std::array<Lane, kMaxParts> lanes {};
     double stepBeats = 0.25; ///< length of one step in quarter notes (0.25 = 16th notes)
     double swing = 0.5;      ///< 0.5 = straight, 0.75 = maximum; delays every odd step
+    Sweep sweep {};
 };
 
 /// Sample-accurate step sequencer.

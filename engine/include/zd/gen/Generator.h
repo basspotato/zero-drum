@@ -72,6 +72,7 @@ void addFill(Pattern& pattern, float intensity, std::uint64_t seed, std::uint32_
 /// to 32nds to 64ths with a velocity ramp, a kick on the quarters that drops out for the
 /// last quarter of the build, offbeat hats, no 808 or perc, and an 8th of silence at the
 /// end before the drop. Unlocked lanes are replaced; all of them take the build's length.
+/// It also sets the pattern's sweep: a high-pass rising over the whole build (see Sweep).
 void makeBuild(Pattern& pattern, int bars, std::uint32_t lockMask) noexcept;
 
 /// Counts the active steps in one lane (within its length).

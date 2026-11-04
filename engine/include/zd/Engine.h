@@ -12,6 +12,7 @@
 #include "zd/dsp/Clipper.h"
 #include "zd/dsp/Glue.h"
 #include "zd/dsp/Reverb.h"
+#include "zd/dsp/Svf.h"
 
 #include <algorithm>
 #include <array>
@@ -199,6 +200,7 @@ private:
     void renderParts(float* left, float* right, float* send, int from, int to) noexcept;
     void applyPendingPattern() noexcept;
     void applyPendingSamples() noexcept;
+    void applySweep(const Transport& transport, float* left, float* right, int numSamples) noexcept;
     void retireSample(int partIndex) noexcept;
 
     enum PendingState : int { Empty = 0, Writing = 1, Ready = 2, Reading = 3 };
@@ -218,6 +220,12 @@ private:
     dsp::ReverbSettings reverbSettings_ {};
     std::vector<float> send_;
     dsp::GlueCompressor glue_;
+    // Build sweep (Pattern::sweep): the cutoff is set every kSweepChunk samples of absolute
+    // song position, so it is the same whatever the block size.
+    static constexpr int kSweepChunk = 32;
+    dsp::Svf sweepL_, sweepR_;
+    long long sweepChunk_ = -1;
+    bool sweepActive_ = false;
 
     // Sample hand-off per part (see submitSample). owned_ mirrors what the audio thread's
     // part holds, so the audio thread never drops the last reference to a sample.

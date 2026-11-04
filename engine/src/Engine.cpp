@@ -3,6 +3,7 @@
 #include "zd/dsp/Math.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <thread>
 
@@ -296,6 +297,10 @@ void Engine::reset() noexcept
     clipper_.reset();
     reverb_.reset();
     glue_.reset();
+    sweepL_.reset();
+    sweepR_.reset();
+    sweepChunk_ = -1;
+    sweepActive_ = false;
 }
 
 void Engine::setSample(int partIndex, SampleDataPtr sample)
@@ -358,6 +363,48 @@ void Engine::collectSamples() noexcept
             retireSample(p);
             slot.store(SlotIdle, std::memory_order_release);
         }
+    }
+}
+
+void Engine::applySweep(const Transport& transport, float* left, float* right, int numSamples) noexcept
+{
+    const Pattern& pattern = sequencer_.pattern();
+    const Sweep& sw = pattern.sweep;
+    if (sw.steps <= 0 || !transport.playing || transport.bpm <= 0.0)
+    {
+        if (sweepActive_)
+        {
+            sweepL_.reset();
+            sweepR_.reset();
+            sweepChunk_ = -1;
+            sweepActive_ = false;
+        }
+        return;
+    }
+    sweepActive_ = true;
+    const double samplesPerBeat = 60.0 * sampleRate_ / transport.bpm;
+    const long long first = std::llround(transport.ppqPosition * samplesPerBeat);
+    const double loopSamples = static_cast<double>(sw.steps) * pattern.stepBeats * samplesPerBeat;
+    const double lo = std::clamp(static_cast<double>(sw.startHz), 20.0, 0.45 * sampleRate_);
+    const double hi = std::clamp(static_cast<double>(sw.endHz), lo, 0.45 * sampleRate_);
+    const double q = 0.7071 + 2.3 * std::clamp(static_cast<double>(sw.resonance), 0.0, 1.0);
+    for (int n = 0; n < numSamples; ++n)
+    {
+        const long long at = first + n;
+        const long long chunk = (at >= 0 ? at : at - (kSweepChunk - 1)) / kSweepChunk;
+        if (chunk != sweepChunk_)
+        {
+            sweepChunk_ = chunk;
+            double pos = std::fmod(static_cast<double>(chunk * kSweepChunk), loopSamples) / loopSamples;
+            if (pos < 0.0)
+                pos += 1.0;
+            // Even in log-frequency with a slow start: most of the rise lands in the last bars.
+            const double hz = lo * std::pow(hi / lo, std::pow(pos, 1.5));
+            sweepL_.setCoefficients(hz, q, sampleRate_);
+            sweepR_.setCoefficients(hz, q, sampleRate_);
+        }
+        left[n] = static_cast<float>(sweepL_.process(left[n]).high);
+        right[n] = static_cast<float>(sweepR_.process(right[n]).high);
     }
 }
 
@@ -479,6 +526,7 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
     }
     renderParts(left, right, send, position, numSamples);
     reverb_.process(send, left, right, numSamples);
+    applySweep(transport, left, right, numSamples);
     glue_.process(left, right, numSamples);
     glueReduction_.store(static_cast<float>(glue_.gainReductionDb()), std::memory_order_relaxed);
 
