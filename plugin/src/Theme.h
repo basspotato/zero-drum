@@ -13,6 +13,17 @@ inline const juce::Colour kCellOff { 0xff2a2d36 };
 inline const juce::Colour kText { 0xffe8e8ec };
 inline const juce::Colour kDim { 0xff8a8d98 };
 inline const juce::Colour kAccent { 0xffff7a2f };
+inline const juce::Colour kRaised { 0xff262932 };  ///< buttons and fields
+inline const juce::Colour kLine { 0xff30333d };    ///< hairlines and outlines
+inline const juce::Colour kGood { 0xff2fd1c1 };
+inline const juce::Colour kWarn { 0xffffc23d };
+inline const juce::Colour kHot { 0xffff3d5a };
+
+/// Three type sizes, and the 8 px grid everything sits on.
+inline constexpr float kHeading = 17.0f;
+inline constexpr float kLabel = 13.0f;
+inline constexpr float kCaption = 11.0f;
+inline constexpr int kGrid = 8;
 
 /// Lane colours: kick, snare, hat, perc, 808, then a neutral for parts without a default sound.
 inline juce::Colour laneColour(int lane)

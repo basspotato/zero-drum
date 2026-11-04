@@ -53,6 +53,7 @@ juce::Rectangle<float> StepGrid::gridArea() const
     auto area = getLocalBounds().toFloat().reduced(6.0f);
     if (pages() > 1)
         area.removeFromTop(24.0f); // page tabs
+    area.removeFromTop(static_cast<float>(kRulerHeight)); // beat ruler
     return area;
 }
 
@@ -127,6 +128,30 @@ void StepGrid::paint(juce::Graphics& g)
             const juce::String text = follow ? juce::String("Follow")
                                              : juce::String(i * kPageSteps + 1) + "-" + juce::String(juce::jmin(columns(), (i + 1) * kPageSteps));
             g.drawText(text, tab, juce::Justification::centred);
+        }
+    }
+    // Beat ruler: bar numbers on the downbeat, beat numbers on the others, the playhead in the accent.
+    if (rows() > 0)
+    {
+        const auto grid = gridArea();
+        for (int s = firstColumn(); s < firstColumn() + visibleColumns(); ++s)
+        {
+            const auto cell = cellBounds(0, s);
+            const auto r = juce::Rectangle<float>(cell.getX(), grid.getY() - kRulerHeight, cell.getWidth(), static_cast<float>(kRulerHeight - 4));
+            const int longest = columns();
+            if (playStep_ >= 0 && longest > 0 && s == playStep_ % longest)
+            {
+                g.setColour(zdui::kAccent);
+                g.fillRoundedRectangle(r.reduced(1.5f, 2.0f), 2.0f);
+            }
+            if (s % 4 == 0)
+            {
+                const bool bar = s % 16 == 0;
+                g.setColour(bar ? zdui::kText : zdui::kDim);
+                g.setFont(juce::FontOptions(zdui::kCaption, bar ? juce::Font::bold : juce::Font::plain));
+                const juce::String text = bar ? juce::String(s / 16 + 1) : juce::String(s / 16 + 1) + "." + juce::String((s % 16) / 4 + 1);
+                g.drawText(text, r.withWidth(r.getWidth() * 4.0f).withTrimmedLeft(4.0f).toNearestInt(), juce::Justification::centredLeft);
+            }
         }
     }
     for (int l = 0; l < rows(); ++l)

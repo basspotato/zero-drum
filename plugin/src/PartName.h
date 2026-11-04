@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LookAndFeel.h"
 #include "PluginProcessor.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -14,10 +15,13 @@ inline void askPartName(ZeroDrumProcessor& owner, int part, std::function<void()
 {
     auto* window = new juce::AlertWindow("Rename part", "Name for part " + juce::String(part + 1) + " (empty for the default):",
                                          juce::MessageBoxIconType::NoIcon);
+    juce::SharedResourcePointer<LookAndFeel> look;
+    window->setLookAndFeel(&look.get());
     window->addTextEditor("name", owner.padName(part));
     window->addButton("Rename", 1, juce::KeyPress(juce::KeyPress::returnKey));
     window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-    window->enterModalState(true, juce::ModalCallbackFunction::create([window, &owner, part, done = std::move(done)](int result) {
+    window->enterModalState(true, juce::ModalCallbackFunction::create([window, look, &owner, part, done = std::move(done)](int result) {
+                                window->setLookAndFeel(nullptr);
                                 if (result != 1)
                                     return;
                                 owner.setPartName(part, window->getTextEditorContents("name"));

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "LookAndFeel.h"
 #include "MixPage.h"
 #include "PadGrid.h"
 #include "PluginProcessor.h"
@@ -8,9 +9,9 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
-/// Phase 1 editor: a generator bar (style, Generate, Mutate, Fill, Build, Export, Drag MIDI)
-/// over three tabs: Beat (the step grid), Pads (4x4 pads with the selected part's controls)
-/// and Sound (every parameter).
+/// The editor: a header with the generator (style, Generate, Mutate, Fill, Build), undo, kit,
+/// export and the output meter; a pattern bar (slots, chain, drag-out chips); four tabs (Beat,
+/// Pads, Mix, Sound); and a status line. Laid out on an 8 px grid.
 /// A chip you drag out of the plugin to drop a MIDI clip on a DAW track. `lane` -1 = whole beat.
 class MidiDragChip final : public juce::Component, public juce::SettableTooltipClient
 {
@@ -81,10 +82,13 @@ private:
         juce::Label caption;
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     };
-    static constexpr int kKnobs = 6;
-    static constexpr const char* kSuffixes[kKnobs] { "Attack", "Sustain", "Cutoff", "StripDrive", "VelTone", "RevSend" };
-    static constexpr const char* kLabels[kKnobs] { "Attack", "Sustain", "Cutoff", "Drive", "Vel > Tone", "Reverb" };
-    static constexpr const char* kPadLabels[kKnobs] { "Pitch", "Decay", "Start", "Level", "Pan", "Reverb" };
+    static constexpr int kKnobs = 8;
+    static constexpr int kStripKnobs = 6, kPadKnobs = 7;
+    static constexpr const char* kSuffixes[kKnobs] { "Attack", "Sustain", "Cutoff", "StripDrive", "VelTone", "RevSend", "", "" };
+    static constexpr const char* kLabels[kKnobs] { "Attack", "Sustain", "Cutoff", "Drive", "Vel > Tone", "Reverb", "", "" };
+    static constexpr const char* kPadLabels[kKnobs] { "Pitch", "Decay", "Start", "Level", "Pan", "Reverb", "Vary", "" };
+    /// Pad knob i uses kPadSuffixes[kPadKnobMap[i]] (-1: unused).
+    static constexpr int kPadKnobMap[kKnobs] { 0, 1, 2, 3, 4, 5, 8, -1 };
     ZeroDrumProcessor& owner_;
     int part_ = 0;
     std::array<Knob, kKnobs> knobs_;
@@ -97,10 +101,29 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> crushAttachment_;
 };
 
+/// A thin output peak meter: green, amber over -6 dBFS, red at 0 dBFS, with a peak hold.
+class OutputMeter final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+{
+public:
+    explicit OutputMeter(ZeroDrumProcessor& owner) : owner_(owner)
+    {
+        setTooltip("Output level");
+        startTimerHz(30);
+    }
+    void paint(juce::Graphics&) override;
+
+private:
+    void timerCallback() override;
+    ZeroDrumProcessor& owner_;
+    float level_ = 0.0f, hold_ = 0.0f;
+    int holdFrames_ = 0;
+};
+
 class ZeroDrumEditor final : public juce::AudioProcessorEditor, public juce::DragAndDropContainer, private juce::Timer
 {
 public:
     explicit ZeroDrumEditor(ZeroDrumProcessor&);
+    ~ZeroDrumEditor() override;
     void resized() override;
     void paint(juce::Graphics&) override;
 
@@ -112,6 +135,7 @@ private:
     void chooseKitFile(bool save);
 
     ZeroDrumProcessor& owner_;
+    juce::SharedResourcePointer<zdui::LookAndFeel> look_; ///< declared first, so it outlives every child
     juce::ComboBox style_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> styleAttachment_;
     juce::TextButton generate_ { "Generate" }, mutate_ { "Mutate" }, fill_ { "Fill" }, build_ { "Build" };
@@ -119,7 +143,10 @@ private:
     juce::TextButton kit_ { "Kit" };
     juce::TextButton undo_ { "Undo" }, redo_ { "Redo" };
     std::unique_ptr<juce::FileChooser> chooser_;
-    juce::Label dragLabel_ { {}, "Drag out:" };
+    juce::Label dragLabel_ { {}, "DRAG" };
+    juce::Label patternLabel_ { {}, "PATTERN" };
+    juce::Label hints_;
+    OutputMeter meter_ { owner_ };
     std::vector<std::unique_ptr<MidiDragChip>> chips_;
     juce::Label summary_;
     std::array<SlotButton, zd::kMaxChain> slots_;

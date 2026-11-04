@@ -1,5 +1,6 @@
 #include "MixPage.h"
 
+#include "LookAndFeel.h"
 #include "Theme.h"
 
 #include <cmath>
@@ -40,6 +41,11 @@ MixPage::MixPage(ZeroDrumProcessor& owner) : owner_(owner)
     addKnob(master, "clipCeiling", "Ceiling");
     addKnob(master, "masterLevel", "Level");
 
+    auto& midi = addGroup("MIDI out", juce::Colour(0xffb36bff));
+    addToggle(midi, "midiOut", "On");
+    addKnob(midi, "midiNoteLength", "Note length");
+    addKnob(midi, "midiDrumChannel", "Drum channel");
+
     startTimerHz(30);
 }
 
@@ -55,19 +61,8 @@ MixPage::Group& MixPage::addGroup(const juce::String& title, juce::Colour colour
 void MixPage::addKnob(Group& g, const char* id, const char* label)
 {
     auto k = std::make_unique<Knob>();
-    k->slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 70, 16);
-    k->slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-    k->slider.setColour(juce::Slider::rotarySliderFillColourId, g.colour);
-    k->slider.setColour(juce::Slider::thumbColourId, g.colour.brighter(0.4f));
-    k->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner_.state(), id, k->slider);
-    k->slider.textFromValueFunction = [](double v) {
-        return std::abs(v) >= 100.0 ? juce::String(juce::roundToInt(v)) : juce::String(v, 2);
-    };
-    k->slider.updateText();
-    k->caption.setText(label, juce::dontSendNotification);
-    k->caption.setJustificationType(juce::Justification::centred);
-    k->caption.setColour(juce::Label::textColourId, zdui::kDim);
-    k->caption.setFont(juce::FontOptions(12.0f));
+    zdui::styleKnob(k->slider, k->caption, label, g.colour);
+    k->attachment = zdui::attachKnob(owner_.state(), id, k->slider);
     addAndMakeVisible(k->slider);
     addAndMakeVisible(k->caption);
     g.knobs.push_back(std::move(k));
@@ -83,25 +78,34 @@ void MixPage::addToggle(Group& g, const char* id, const char* label)
 
 void MixPage::resized()
 {
-    auto area = getLocalBounds().reduced(10);
-    const int perRow = juce::jmax(1, (area.getWidth() - 16) / kKnobSize);
-    for (auto& g : groups_)
+    // Three rows: reverb, glue (with its meter), then sidechain, master and MIDI side by side.
+    // Each group is as wide as its knobs, on the 8 px grid.
+    auto area = getLocalBounds().reduced(8, 12);
+    const std::vector<std::vector<int>> rows { { 0 }, { 1 }, { 2, 3, 4 } };
+    const int rowH = kGroupHeader + kKnobSize + 18 + 12;
+    for (const auto& rowGroups : rows)
     {
-        const int extra = g->title == "Glue" ? 1 : 0; // room for the meter
-        const int cells = static_cast<int>(g->knobs.size()) + extra;
-        const int rows = (cells + perRow - 1) / perRow;
-        g->bounds = area.removeFromTop(kGroupHeader + rows * (kKnobSize + 18) + 8);
+        auto row = area.removeFromTop(rowH);
         area.removeFromTop(8);
-        auto inner = g->bounds.reduced(8, 0);
-        auto header = inner.removeFromTop(kGroupHeader);
-        if (g->toggle)
-            g->toggle->button.setBounds(header.removeFromRight(100).reduced(0, 4));
-        for (std::size_t i = 0; i < g->knobs.size(); ++i)
+        for (int gi : rowGroups)
         {
-            const int col = static_cast<int>(i) % perRow, row = static_cast<int>(i) / perRow;
-            auto r = juce::Rectangle<int>(inner.getX() + col * kKnobSize, inner.getY() + row * (kKnobSize + 18), kKnobSize, kKnobSize + 18);
-            g->knobs[i]->caption.setBounds(r.removeFromTop(16));
-            g->knobs[i]->slider.setBounds(r.reduced(6, 0));
+            if (gi >= static_cast<int>(groups_.size()))
+                continue;
+            auto& g = groups_[static_cast<std::size_t>(gi)];
+            const int cells = static_cast<int>(g->knobs.size()) + (g->title == "Glue" ? 1 : 0);
+            const int width = rowGroups.size() == 1 ? row.getWidth() : juce::jmax(cells * kKnobSize + 32, 200);
+            g->bounds = row.removeFromLeft(juce::jmin(width, row.getWidth()));
+            row.removeFromLeft(8);
+            auto inner = g->bounds.reduced(16, 0);
+            auto header = inner.removeFromTop(kGroupHeader);
+            if (g->toggle)
+                g->toggle->button.setBounds(header.removeFromRight(84).reduced(0, 3));
+            for (std::size_t i = 0; i < g->knobs.size(); ++i)
+            {
+                auto r = juce::Rectangle<int>(inner.getX() + static_cast<int>(i) * kKnobSize, inner.getY(), kKnobSize, kKnobSize + 18);
+                g->knobs[i]->caption.setBounds(r.removeFromTop(14));
+                g->knobs[i]->slider.setBounds(r.reduced(6, 0));
+            }
         }
     }
 }
@@ -109,13 +113,10 @@ void MixPage::resized()
 juce::Rectangle<int> MixPage::meterBounds() const
 {
     for (const auto& g : groups_)
-        if (g->title == "Glue")
+        if (g->title == "Glue" && !g->knobs.empty())
         {
-            const auto inner = g->bounds.reduced(8, 0).withTrimmedTop(kGroupHeader);
-            const int perRow = juce::jmax(1, (getLocalBounds().reduced(10).getWidth() - 16) / kKnobSize);
-            const int i = static_cast<int>(g->knobs.size());
-            const int col = i % perRow, row = i / perRow;
-            return { inner.getX() + col * kKnobSize + 22, inner.getY() + row * (kKnobSize + 18) + 16, 34, kKnobSize - 6 };
+            const auto last = g->knobs.back()->slider.getBounds();
+            return { last.getRight() + 26, last.getY() + 4, 24, last.getHeight() - 26 };
         }
     return {};
 }
@@ -126,10 +127,14 @@ void MixPage::paint(juce::Graphics& g)
     for (const auto& grp : groups_)
     {
         g.setColour(zdui::kPanel);
-        g.fillRoundedRectangle(grp->bounds.toFloat(), 6.0f);
+        g.fillRoundedRectangle(grp->bounds.toFloat(), 8.0f);
+        auto head = grp->bounds.reduced(16, 0).removeFromTop(kGroupHeader);
         g.setColour(grp->colour);
-        g.setFont(juce::FontOptions(15.0f, juce::Font::bold));
-        g.drawText(grp->title, grp->bounds.reduced(12, 0).removeFromTop(kGroupHeader), juce::Justification::centredLeft);
+        g.fillEllipse(head.removeFromLeft(8).toFloat().withSizeKeepingCentre(8.0f, 8.0f));
+        head.removeFromLeft(8);
+        g.setColour(zdui::kText);
+        g.setFont(juce::FontOptions(zdui::kLabel + 1.0f, juce::Font::bold));
+        g.drawText(grp->title.toUpperCase(), head, juce::Justification::centredLeft);
     }
     // Glue gain reduction: fills from the top, 0 to 12 dB.
     const auto m = meterBounds().toFloat();

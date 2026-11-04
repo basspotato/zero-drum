@@ -6,6 +6,7 @@ MidiDragChip::MidiDragChip(ZeroDrumProcessor& owner, int lane, juce::String labe
     : owner_(owner), lane_(lane), label_(std::move(label))
 {
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
+    setRepaintsOnMouseActivity(true);
     setTooltip(lane == kAudioLoop ? "Drag the loop into your DAW as audio (WAV, through the bus)"
                : lane < 0         ? "Drag the whole beat into your DAW as a MIDI clip"
                                   : "Drag the " + label_ + " lane into your DAW as a MIDI clip (Alt-drag: as audio)");
@@ -13,12 +14,24 @@ MidiDragChip::MidiDragChip(ZeroDrumProcessor& owner, int lane, juce::String labe
 
 void MidiDragChip::paint(juce::Graphics& g)
 {
-    const auto r = getLocalBounds().toFloat().reduced(1.0f);
-    g.setColour(dragging_ ? juce::Colour(0xffff7a2f) : juce::Colour(lane_ == kAudioLoop ? 0xff1f8f84 : lane_ < 0 ? 0xff3a5bd9 : 0xff2a2d36));
-    g.fillRoundedRectangle(r, 4.0f);
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::FontOptions(12.0f));
-    g.drawText(label_, getLocalBounds(), juce::Justification::centred);
+    // Flat chips with a colour dot: the lane's colour, white for the whole beat, teal for audio.
+    const auto r = getLocalBounds().toFloat().reduced(0.5f);
+    const bool over = isMouseOver();
+    g.setColour(dragging_ ? zdui::kAccent : (over ? zdui::kRaised.brighter(0.08f) : zdui::kRaised));
+    g.fillRoundedRectangle(r, 6.0f);
+    g.setColour(over ? zdui::kLine.brighter(0.3f) : zdui::kLine);
+    g.drawRoundedRectangle(r, 6.0f, 1.0f);
+    const auto dotColour = lane_ == kAudioLoop ? zdui::kGood : lane_ < 0 ? zdui::kText : zdui::laneColour(lane_);
+    auto content = getLocalBounds().reduced(7, 0);
+    const auto dot = content.removeFromLeft(7).toFloat().withSizeKeepingCentre(6.0f, 6.0f);
+    g.setColour(dotColour);
+    if (lane_ == kAudioLoop)
+        g.drawEllipse(dot.expanded(0.5f), 1.5f); // a ring for audio, a dot for MIDI
+    else
+        g.fillEllipse(dot);
+    g.setColour(dragging_ ? juce::Colours::black : zdui::kText);
+    g.setFont(juce::FontOptions(zdui::kLabel - 1.0f, juce::Font::bold));
+    g.drawText(label_, content.withTrimmedLeft(3), juce::Justification::centred);
 }
 
 void MidiDragChip::mouseDrag(const juce::MouseEvent& e)
@@ -48,14 +61,7 @@ PartPanel::PartPanel(ZeroDrumProcessor& owner) : owner_(owner)
     for (std::size_t i = 0; i < knobs_.size(); ++i)
     {
         auto& k = knobs_[i];
-        k.slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 64, 16);
-        k.slider.setNumDecimalPlacesToDisplay(2);
-        k.slider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
-        k.slider.setColour(juce::Slider::rotarySliderFillColourId, zdui::kAccent);
-        k.caption.setText(kLabels[i], juce::dontSendNotification);
-        k.caption.setJustificationType(juce::Justification::centred);
-        k.caption.setColour(juce::Label::textColourId, zdui::kDim);
-        k.caption.setFont(juce::FontOptions(12.0f));
+        zdui::styleKnob(k.slider, k.caption, kLabels[i], zdui::kAccent);
         addAndMakeVisible(k.slider);
         addAndMakeVisible(k.caption);
     }
@@ -87,19 +93,16 @@ void PartPanel::showPart(int part)
     {
         auto& k = knobs_[i];
         k.attachment.reset();
-        if (knobsOn)
+        const int padIndex = kPadKnobMap[i];
+        const bool used = knobsOn && (strip ? static_cast<int>(i) < kStripKnobs : padIndex >= 0);
+        if (used)
         {
-            const char* suffix = strip ? kSuffixes[i] : ZeroDrumProcessor::kPadSuffixes[i];
-            k.attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner_.state(), id + suffix, k.slider);
-            // The attachment installs the parameter's own text function (full precision); show something readable.
-            k.slider.textFromValueFunction = [](double v) {
-                return std::abs(v) >= 100.0 ? juce::String(juce::roundToInt(v)) : juce::String(v, 2);
-            };
-            k.slider.updateText();
+            const juce::String suffix = strip ? juce::String(kSuffixes[i]) : juce::String(ZeroDrumProcessor::kPadSuffixes[padIndex]);
+            k.attachment = zdui::attachKnob(owner_.state(), id + suffix, k.slider);
             k.caption.setText(strip ? kLabels[i] : kPadLabels[i], juce::dontSendNotification);
         }
-        k.slider.setVisible(knobsOn);
-        k.caption.setVisible(knobsOn);
+        k.slider.setVisible(used);
+        k.caption.setVisible(used);
         k.slider.setColour(juce::Slider::rotarySliderFillColourId, zdui::laneColour(part));
         k.slider.setColour(juce::Slider::thumbColourId, zdui::laneColour(part).brighter(0.4f));
     }
@@ -124,43 +127,70 @@ void PartPanel::showPart(int part)
 
 void PartPanel::paint(juce::Graphics& g)
 {
-    g.fillAll(zdui::kPanel);
-    auto top = getLocalBounds().removeFromTop(36).reduced(12, 6);
+    g.setColour(zdui::kPanel);
+    g.fillRoundedRectangle(getLocalBounds().toFloat(), 8.0f);
+    // Title: a colour bar, the part's name and what it is.
+    auto top = getLocalBounds().removeFromTop(52).reduced(16, 10);
     g.setColour(zdui::laneColour(part_));
-    g.setFont(juce::FontOptions(16.0f, juce::Font::bold));
-    g.drawText(owner_.padName(part_), top, juce::Justification::centredLeft);
+    g.fillRoundedRectangle(top.removeFromLeft(4).toFloat(), 2.0f);
+    top.removeFromLeft(10);
+    g.setColour(zdui::kText);
+    g.setFont(juce::FontOptions(zdui::kHeading, juce::Font::bold));
+    g.drawText(owner_.padName(part_), top.removeFromTop(20), juce::Justification::centredLeft);
+    g.setColour(zdui::kDim);
+    g.setFont(juce::FontOptions(zdui::kCaption));
+    const juce::String what = part_ < ZeroDrumProcessor::kNumStripParts ? "synth voice" : owner_.padHasSample(part_) ? "sample" : "empty";
+    g.drawText("Pad " + juce::String(part_ + 1) + "  /  " + what, top, juce::Justification::centredLeft);
     if (ZeroDrumProcessor::isSamplePad(part_) && !owner_.padHasSample(part_))
     {
         g.setColour(zdui::kDim);
-        g.setFont(juce::FontOptions(13.0f));
+        g.setFont(juce::FontOptions(zdui::kLabel));
         g.drawFittedText("Drop a WAV, AIFF or FLAC on this pad, or load one below. Its lane shows up in the step grid once it has a sound.",
-                         getLocalBounds().reduced(16, 48).removeFromTop(80), juce::Justification::topLeft, 4);
+                         getLocalBounds().reduced(16, 0).withTrimmedTop(60).removeFromTop(48), juce::Justification::topLeft, 3);
     }
 }
 
 void PartPanel::resized()
 {
-    auto area = getLocalBounds().reduced(8);
-    area.removeFromTop(32);
-    const int cell = juce::jmin(area.getWidth() / 2, 96);
-    for (std::size_t i = 0; i < knobs_.size(); ++i)
+    // Knobs in a 3-column grid under the title, then the switches, then the sample buttons.
+    auto area = getLocalBounds().reduced(12, 0);
+    area.removeFromTop(60);
+    const int cols = 3;
+    const int cell = juce::jmin(area.getWidth() / cols, 88);
+    const int rowH = cell + 26;
+    int shown = 0;
+    for (auto& k : knobs_)
     {
-        auto r = juce::Rectangle<int>(area.getX() + static_cast<int>(i % 2) * cell, area.getY() + static_cast<int>(i / 2) * (cell + 8), cell, cell + 8);
-        knobs_[i].caption.setBounds(r.removeFromTop(16));
-        knobs_[i].slider.setBounds(r.reduced(4));
+        if (!k.slider.isVisible())
+            continue;
+        auto r = juce::Rectangle<int>(area.getX() + (shown % cols) * cell, area.getY() + (shown / cols) * rowH, cell, rowH);
+        k.caption.setBounds(r.removeFromTop(14));
+        k.slider.setBounds(r.reduced(4, 0).withTrimmedBottom(10));
+        ++shown;
     }
-    crush_.setBounds(area.getX() + 8, area.getY() + 3 * (cell + 8) + 4, cell * 2 - 16, 24);
-    reverse_.setBounds(crush_.getBounds().withWidth(90));
-    choke_.setBounds(crush_.getRight() - (cell + 8), crush_.getY(), cell + 8, 24);
+    const int rows = (shown + cols - 1) / cols;
+    auto below = area.withTrimmedTop(rows * rowH + 12);
+    auto line = below.removeFromTop(28);
+    crush_.setBounds(line.withWidth(120));
+    reverse_.setBounds(line.removeFromLeft(110));
+    line.removeFromLeft(8);
+    choke_.setBounds(line.removeFromLeft(juce::jmin(150, line.getWidth())));
     const bool loaded = owner_.padHasSample(part_);
-    const int buttonsY = loaded ? area.getY() + 3 * (cell + 8) + 34 : area.getY() + 96;
-    load_.setBounds(area.getX() + 8, buttonsY, cell + 20, 26);
-    clear_.setBounds(area.getX() + cell + 36, buttonsY, cell - 44, 26);
+    auto buttons = loaded ? below.withTrimmedTop(12).removeFromTop(28) : area.withTrimmedTop(64).removeFromTop(28);
+    load_.setBounds(buttons.removeFromLeft(130));
+    buttons.removeFromLeft(8);
+    clear_.setBounds(buttons.removeFromLeft(72));
 }
 
 ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     : AudioProcessorEditor(owner), owner_(owner), generic_(owner), mix_(owner), steps_(owner), pads_(owner), partPanel_(owner)
 {
+    setLookAndFeel(&look_.get());
+    generate_.setColour(juce::TextButton::buttonColourId, zdui::kAccent);
+    generate_.setColour(juce::TextButton::textColourOffId, juce::Colours::black);
+    generate_.setTooltip("A new beat in the chosen style (locked lanes stay)");
+    mutate_.setTooltip("Change the beat a little");
+    fill_.setTooltip("Busier last quarter-bar on snare and perc");
     if (auto* param = dynamic_cast<juce::AudioParameterChoice*>(owner.state().getParameter("genStyle")))
         style_.addItemList(param->choices, 1);
     styleAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(owner.state(), "genStyle", style_);
@@ -181,9 +211,20 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     redo_.setWantsKeyboardFocus(false);
     kit_.setTooltip("Save or load the whole kit: every sound, the bus and the pattern");
 
-    dragLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    dragLabel_.setFont(juce::FontOptions(12.0f));
-    addAndMakeVisible(dragLabel_);
+    for (auto* caption : { &dragLabel_, &patternLabel_ })
+    {
+        caption->setColour(juce::Label::textColourId, zdui::kDim);
+        caption->setFont(juce::FontOptions(zdui::kCaption, juce::Font::bold));
+        addAndMakeVisible(*caption);
+    }
+    dragLabel_.setJustificationType(juce::Justification::centredRight);
+    hints_.setText("Space play   1-4 slots   Ctrl+Z undo   Shift-drag pitch   Alt-drag chance   Ctrl-drag timing",
+                   juce::dontSendNotification);
+    hints_.setColour(juce::Label::textColourId, zdui::kDim);
+    hints_.setFont(juce::FontOptions(zdui::kCaption));
+    hints_.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(hints_);
+    addAndMakeVisible(meter_);
     chips_.push_back(std::make_unique<MidiDragChip>(owner_, -1, "Beat"));
     for (int i = 0; i < ZeroDrumProcessor::kNumStripParts; ++i)
         chips_.push_back(std::make_unique<MidiDragChip>(owner_, i, ZeroDrumProcessor::kStripNames[i]));
@@ -191,8 +232,8 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     for (auto& chip : chips_)
         addAndMakeVisible(*chip);
 
-    summary_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
-    summary_.setFont(juce::FontOptions(13.0f));
+    summary_.setColour(juce::Label::textColourId, zdui::kDim);
+    summary_.setFont(juce::FontOptions(zdui::kCaption));
 
     for (auto* c : std::initializer_list<juce::Component*> { &style_, &generate_, &mutate_, &fill_, &build_, &export_, &kit_, &undo_, &redo_, &summary_ })
         addAndMakeVisible(*c);
@@ -288,7 +329,8 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     padsPage_.addAndMakeVisible(fullLevel_);
     padsPage_.addAndMakeVisible(tap_);
 
-    tabs_.setTabBarDepth(30);
+    tabs_.setTabBarDepth(36);
+    tabs_.setOutline(0);
     tabs_.addTab("Beat", zdui::kBackground, &steps_, false);
     tabs_.addTab("Pads", zdui::kBackground, &padsPage_, false);
     tabs_.addTab("Mix", zdui::kBackground, &mix_, false);
@@ -296,7 +338,8 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     addAndMakeVisible(tabs_);
 
     setResizable(true, true);
-    setSize(720, 760);
+    setResizeLimits(880, 660, 1800, 1400);
+    setSize(900, 800);
     timerCallback();
     startTimerHz(4);
 }
@@ -481,53 +524,125 @@ void ZeroDrumEditor::chooseExportFolder()
     });
 }
 
+ZeroDrumEditor::~ZeroDrumEditor()
+{
+    setLookAndFeel(nullptr);
+}
+
+void OutputMeter::timerCallback()
+{
+    // Instant rise, smooth fall; the peak line holds for a second.
+    const float peak = owner_.takeOutputPeak();
+    level_ = peak > level_ ? peak : level_ * 0.86f;
+    if (peak >= hold_)
+    {
+        hold_ = peak;
+        holdFrames_ = 30;
+    }
+    else if (--holdFrames_ <= 0)
+        hold_ *= 0.9f;
+    repaint();
+}
+
+void OutputMeter::paint(juce::Graphics& g)
+{
+    // -48..0 dBFS, bottom to top.
+    const auto r = getLocalBounds().toFloat();
+    g.setColour(zdui::kCellOff);
+    g.fillRoundedRectangle(r, 3.0f);
+    auto toY = [&r](float gain) {
+        const float db = juce::Decibels::gainToDecibels(gain, -48.0f);
+        return r.getBottom() - r.getHeight() * juce::jlimit(0.0f, 1.0f, (db + 48.0f) / 48.0f);
+    };
+    const float y = toY(level_);
+    const float db = juce::Decibels::gainToDecibels(level_, -100.0f);
+    g.setColour(db >= -0.1f ? zdui::kHot : db > -6.0f ? zdui::kWarn : zdui::kGood);
+    g.fillRoundedRectangle(r.withTop(y), 3.0f);
+    if (hold_ > 1.0e-4f)
+    {
+        g.setColour(zdui::kText.withAlpha(0.8f));
+        g.fillRect(r.getX(), toY(hold_) - 1.0f, r.getWidth(), 2.0f);
+    }
+}
+
 void ZeroDrumEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colour(0xff15161a));
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::FontOptions(18.0f, juce::Font::bold));
-    g.drawText("ZERO DRUM", getLocalBounds().removeFromTop(40).reduced(12, 0), juce::Justification::centredLeft);
+    g.fillAll(zdui::kBackground);
+    // Header band (generator and pattern rows) and the status line.
+    const auto header = getLocalBounds().removeFromTop(96);
+    g.setColour(zdui::kPanel);
+    g.fillRect(header);
+    g.setColour(zdui::kLine);
+    g.fillRect(header.getX(), header.getY() + 56, header.getWidth(), 1);
+    g.fillRect(header.getX(), header.getBottom() - 1, header.getWidth(), 1);
+    const auto footer = getLocalBounds().removeFromBottom(28);
+    g.setColour(zdui::kPanel);
+    g.fillRect(footer);
+    g.setColour(zdui::kLine);
+    g.fillRect(footer.getX(), footer.getY(), footer.getWidth(), 1);
+
+    // Wordmark: ZERO in the accent, DRUM in white, and a zero-slash mark.
+    auto mark = juce::Rectangle<float>(16.0f, 16.0f, 24.0f, 24.0f);
+    g.setColour(zdui::kAccent);
+    g.drawEllipse(mark.reduced(2.0f), 3.0f);
+    g.drawLine(mark.getX() + 6.0f, mark.getBottom() - 6.0f, mark.getRight() - 6.0f, mark.getY() + 6.0f, 3.0f);
+    g.setFont(juce::FontOptions(zdui::kHeading + 1.0f, juce::Font::bold));
+    g.drawText("ZERO", juce::Rectangle<int>(48, 14, 60, 28), juce::Justification::centredLeft);
+    g.setColour(zdui::kText);
+    g.drawText("DRUM", juce::Rectangle<int>(103, 14, 60, 28), juce::Justification::centredLeft);
 }
 
 void ZeroDrumEditor::resized()
 {
+    constexpr int pad = 16, gap = 8, small = 4;
     auto area = getLocalBounds();
-    auto top = area.removeFromTop(40).reduced(8, 6);
-    top.removeFromLeft(120); // title
-    style_.setBounds(top.removeFromLeft(150));
-    top.removeFromLeft(8);
-    generate_.setBounds(top.removeFromLeft(90));
-    top.removeFromLeft(4);
-    mutate_.setBounds(top.removeFromLeft(70));
-    top.removeFromLeft(4);
-    fill_.setBounds(top.removeFromLeft(50));
-    top.removeFromLeft(4);
-    build_.setBounds(top.removeFromLeft(56));
-    top.removeFromLeft(8);
-    export_.setBounds(top.removeFromLeft(80));
-    top.removeFromLeft(4);
-    kit_.setBounds(top.removeFromLeft(44));
 
-    auto drag = area.removeFromTop(30).reduced(8, 3);
-    dragLabel_.setBounds(drag.removeFromLeft(72));
-    for (auto& chip : chips_)
+    // Row 1: wordmark | style, Generate, Mutate, Fill, Build | undo, redo | kit, export | meter.
+    auto top = area.removeFromTop(56).reduced(pad, 12);
+    top.removeFromLeft(156); // wordmark
+    meter_.setBounds(top.removeFromRight(8));
+    top.removeFromRight(12);
+    export_.setBounds(top.removeFromRight(76));
+    top.removeFromRight(small);
+    kit_.setBounds(top.removeFromRight(52));
+    top.removeFromRight(12);
+    redo_.setBounds(top.removeFromRight(52));
+    top.removeFromRight(small);
+    undo_.setBounds(top.removeFromRight(52));
+    style_.setBounds(top.removeFromLeft(128));
+    top.removeFromLeft(gap);
+    generate_.setBounds(top.removeFromLeft(96));
+    top.removeFromLeft(gap);
+    mutate_.setBounds(top.removeFromLeft(68));
+    top.removeFromLeft(small);
+    fill_.setBounds(top.removeFromLeft(52));
+    top.removeFromLeft(small);
+    build_.setBounds(top.removeFromLeft(60));
+
+    // Row 2: PATTERN slots, chain, auto fill | DRAG chips.
+    auto row = area.removeFromTop(40).reduced(pad, 6);
+    patternLabel_.setBounds(row.removeFromLeft(64));
+    for (auto& slot : slots_)
     {
-        chip->setBounds(drag.removeFromLeft(chip.get() == chips_.front().get() ? 64 : 56));
-        drag.removeFromLeft(4);
+        slot.setBounds(row.removeFromLeft(34));
+        row.removeFromLeft(2);
     }
-    redo_.setBounds(drag.removeFromRight(52));
-    drag.removeFromRight(4);
-    undo_.setBounds(drag.removeFromRight(52));
-    auto row = area.removeFromTop(26).reduced(8, 2);
-    autoFill_.setBounds(row.removeFromRight(70));
-    row.removeFromRight(4);
-    chain_.setBounds(row.removeFromRight(104));
-    row.removeFromRight(4);
-    for (int i = zd::kMaxChain - 1; i >= 0; --i)
+    row.removeFromLeft(gap);
+    chain_.setBounds(row.removeFromLeft(100));
+    row.removeFromLeft(gap);
+    autoFill_.setBounds(row.removeFromLeft(72));
+    for (auto it = chips_.rbegin(); it != chips_.rend(); ++it)
     {
-        slots_[static_cast<std::size_t>(i)].setBounds(row.removeFromRight(38));
-        row.removeFromRight(2);
+        const auto& chip = *it;
+        const bool wide = chip.get() == chips_.front().get() || chip.get() == chips_.back().get();
+        chip->setBounds(row.removeFromRight(chip.get() == chips_.back().get() ? 60 : wide ? 56 : 58));
+        row.removeFromRight(small);
     }
-    summary_.setBounds(row.reduced(4, 0));
-    tabs_.setBounds(area);
+    dragLabel_.setBounds(row.removeFromRight(36));
+
+    // Status line, then the tabs fill the rest.
+    auto footer = area.removeFromBottom(28).reduced(pad, 0);
+    summary_.setBounds(footer.removeFromLeft(280));
+    hints_.setBounds(footer);
+    tabs_.setBounds(area.reduced(8, 0));
 }

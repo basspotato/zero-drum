@@ -41,6 +41,7 @@ private:
     void shiftLane(int lane, int by);
     /// Long lanes page: over kPageSteps columns the grid shows one page at a time, with tabs on top.
     static constexpr int kPageSteps = 32;
+    static constexpr int kRulerHeight = 20;
     int pages() const noexcept { return (columns() + kPageSteps - 1) / kPageSteps; }
     int firstColumn() const noexcept { return pages() > 1 ? page_ * kPageSteps : 0; }
     int visibleColumns() const noexcept { return pages() > 1 ? juce::jmin(kPageSteps, columns() - firstColumn()) : columns(); }
