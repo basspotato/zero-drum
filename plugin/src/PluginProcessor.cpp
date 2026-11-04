@@ -3,7 +3,9 @@
 #include "PluginEditor.h"
 
 #include "zd/PatternIO.h"
+#include "zd/dsp/Random.h"
 
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -33,6 +35,7 @@ ZeroDrumProcessor::ZeroDrumProcessor()
 {
     setLatencySamples(zd::dsp::MasterClipper::kLatency); // the master stage is always in
     zd::loadDefaultPattern(uiPattern_);
+    slots_.fill(uiPattern_);
     // Cache every parameter pointer once, so the audio thread never builds strings.
     const auto& params = getParameters();
     paramIds_.reserve(static_cast<std::size_t>(params.size()));
@@ -316,7 +319,7 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
     engine.part(4).chokes = value("subCutsKick") > 0.5f ? 1u : 0u;
     engine.part(0).chokes = value("kickCutsSub") > 0.5f ? (1u << 4) : 0u;
 
-    engine.sequencer().pattern().swing = value("swing") * 0.01;
+    engine.sequencer().setSwing(value("swing") * 0.01);
     engine.part(4).mix.duck = value("subDuck");
     engine.part(3).mix.duck = value("percDuck");
     engine.part(4).mix.duckRelease = engine.part(3).mix.duckRelease = value("duckRelease") * 0.001f;
@@ -346,7 +349,12 @@ void ZeroDrumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     applyPadSamples(engine_);
     {
         const std::lock_guard<std::mutex> lock(patternMutex_);
-        engine_.submitPattern(uiPattern_);
+        slots_[static_cast<std::size_t>(editSlot_)] = uiPattern_;
+        auto chain = std::make_unique<zd::Chain>();
+        chain->count = chainCount_;
+        for (int i = 0; i < zd::kMaxChain; ++i)
+            chain->slots[static_cast<std::size_t>(i)] = slots_[static_cast<std::size_t>(chainCount_ > 1 ? i : editSlot_)];
+        engine_.submitChain(*chain);
     }
     freeRunClock_ = zd::InternalClock { value("freeRunBpm") };
 }
@@ -475,7 +483,7 @@ void ZeroDrumProcessor::writeMidiOut(juce::MidiBuffer& midi, int numSamples, boo
     for (int i = 0; i < engine_.numSequencedEvents(); ++i)
     {
         const auto& e = events[i];
-        int channel = 1;
+        int channel = kDrumMidiChannel; // GM drums, as in the dragged and exported MIDI
         int note = zd::exporting::defaultMidiNote(e.part);
         if (e.part == 4)
         {
@@ -552,6 +560,90 @@ void ZeroDrumProcessor::editPattern(const std::function<void(zd::Pattern&)>& edi
         next = uiPattern_;
     }
     publishPattern(next);
+}
+
+// ------------------------------------------------------------------------- undo, euclid, humanize
+
+void ZeroDrumProcessor::pushUndo()
+{
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    undo_.push_back(uiPattern_);
+    if (undo_.size() > kUndoDepth)
+        undo_.erase(undo_.begin());
+    redo_.clear();
+}
+
+bool ZeroDrumProcessor::undo()
+{
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        if (undo_.empty())
+            return false;
+        redo_.push_back(uiPattern_);
+        uiPattern_ = undo_.back();
+        undo_.pop_back();
+        next = uiPattern_;
+    }
+    publishPattern(next);
+    return true;
+}
+
+bool ZeroDrumProcessor::redo()
+{
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        if (redo_.empty())
+            return false;
+        undo_.push_back(uiPattern_);
+        uiPattern_ = redo_.back();
+        redo_.pop_back();
+        next = uiPattern_;
+    }
+    publishPattern(next);
+    return true;
+}
+
+bool ZeroDrumProcessor::canUndo() const
+{
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    return !undo_.empty();
+}
+
+bool ZeroDrumProcessor::canRedo() const
+{
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    return !redo_.empty();
+}
+
+void ZeroDrumProcessor::euclidLane(int lane, int hits)
+{
+    if (lane < 0 || lane >= zd::kMaxParts)
+        return;
+    pushUndo();
+    editPattern([lane, hits](zd::Pattern& p) { zd::gen::euclid(p.lanes[static_cast<std::size_t>(lane)], hits); });
+}
+
+void ZeroDrumProcessor::setLaneLength(int lane, int length)
+{
+    if (lane < 0 || lane >= zd::kMaxParts)
+        return;
+    pushUndo();
+    editPattern([lane, length](zd::Pattern& p) { p.lanes[static_cast<std::size_t>(lane)].length = juce::jlimit(1, zd::kMaxStepsPerLane, length); });
+}
+
+void ZeroDrumProcessor::humanizeBeat(float amount, int onlyLane)
+{
+    pushUndo();
+    const std::uint32_t mask = onlyLane >= 0 ? ~(1u << onlyLane) : lockMask();
+    // Seeded from the beat's seed and a press counter: a new feel each press, but reproducible.
+    std::uint64_t seed = 0;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        seed = zd::dsp::hash64(seed_ * 0x9E3779B97F4A7C15ull + ++humanizeCount_);
+    }
+    editPattern([amount, seed, mask](zd::Pattern& p) { zd::gen::humanize(p, amount, seed, mask); });
 }
 
 // ------------------------------------------------------------------------------- export
@@ -700,6 +792,8 @@ bool ZeroDrumProcessor::partFromTree(int part, const juce::ValueTree& tree, bool
             clearPadSample(part);
     }
     zd::Pattern lane;
+    if (withLane)
+        pushUndo();
     if (withLane && zd::deserializePattern(tree.getProperty("lane").toString().toStdString(), lane))
         editPattern([part, l = lane.lanes[0]](zd::Pattern& pat) { pat.lanes[static_cast<std::size_t>(part)] = l; });
     return true;
@@ -772,6 +866,10 @@ bool ZeroDrumProcessor::loadPadSample(int part, const juce::File& file)
         for (int n = 0; n < length; ++n)
             data->samples[static_cast<std::size_t>(n)] += in[n] * scale;
     }
+    // Trim the silence off both ends (keeping the attack) and normalize to -1 dBFS, so every
+    // pad starts on time and at a comparable level; the pad's Level knob sets the mix.
+    if (!zd::prepareOneShot(*data, -1.0f))
+        return false; // nothing but silence
     padSamples_[static_cast<std::size_t>(part)] = data;
     padFiles_[static_cast<std::size_t>(part)] = file;
     engine_.submitSample(part, std::move(data));
@@ -787,12 +885,8 @@ void ZeroDrumProcessor::clearPadSample(int part)
     engine_.submitSample(part, nullptr);
 }
 
-void ZeroDrumProcessor::exportLoopAsync(const juce::File& directory, ExportCallback done)
+std::shared_ptr<zd::Engine> ZeroDrumProcessor::makeExportEngine() const
 {
-    if (exporting_.exchange(true))
-        return;
-
-    // Everything the job needs is captured now, on the message thread.
     auto engine = std::make_shared<zd::Engine>();
     const double sr = getSampleRate() > 0.0 ? getSampleRate() : 48000.0;
     engine->prepare(sr, 512);
@@ -801,6 +895,36 @@ void ZeroDrumProcessor::exportLoopAsync(const juce::File& directory, ExportCallb
     engine->sequencer().pattern() = patternSnapshot();
     applyParameters(*engine);
     applyPadSamples(*engine);
+    return engine;
+}
+
+juce::File ZeroDrumProcessor::writeLoopWav() const
+{
+    // A few bars render in well under a second, so this runs right on the message thread.
+    auto engine = makeExportEngine();
+    zd::exporting::ExportOptions options;
+    options.bpm = exportBpm();
+    options.bars = zd::exporting::loopBars(engine->sequencer().pattern());
+    options.mixOnly = true;
+    const auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("Zero Drum Audio");
+    const auto work = dir.getChildFile("render");
+    if (!work.createDirectory())
+        return {};
+    const auto result = zd::exporting::exportLoop(*engine, options, toPath(work));
+    if (!result.ok)
+        return {};
+    const auto file = dir.getChildFile("Zero Drum Loop " + juce::String(juce::roundToInt(options.bpm)) + " BPM.wav");
+    file.deleteFile();
+    return work.getChildFile("mix.wav").moveFileTo(file) ? file : juce::File {};
+}
+
+void ZeroDrumProcessor::exportLoopAsync(const juce::File& directory, ExportCallback done)
+{
+    if (exporting_.exchange(true))
+        return;
+
+    // Everything the job needs is captured now, on the message thread.
+    auto engine = makeExportEngine();
 
     zd::exporting::ExportOptions options;
     options.bpm = exportBpm();
@@ -856,9 +980,98 @@ std::uint32_t ZeroDrumProcessor::lockMask() const noexcept
 
 void ZeroDrumProcessor::publishPattern(const zd::Pattern& pattern)
 {
+    // A chain of 1 plays the edited slot alone; a longer chain plays slots A.. in order.
+    auto chain = std::make_unique<zd::Chain>();
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        slots_[static_cast<std::size_t>(editSlot_)] = pattern;
+        chain->count = chainCount_;
+        if (chainCount_ > 1)
+            for (int i = 0; i < chainCount_; ++i)
+                chain->slots[static_cast<std::size_t>(i)] = slots_[static_cast<std::size_t>(i)];
+        else
+            chain->slots[0] = pattern;
+    }
     // The audio thread may be mid-copy for a moment; the retry is bounded and cheap.
-    for (int attempt = 0; attempt < 1000 && !engine_.submitPattern(pattern); ++attempt)
+    for (int attempt = 0; attempt < 1000 && !engine_.submitChain(*chain); ++attempt)
         std::this_thread::yield();
+}
+
+void ZeroDrumProcessor::selectSlot(int slot)
+{
+    slot = juce::jlimit(0, zd::kMaxChain - 1, slot);
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        if (slot == editSlot_)
+            return;
+        slots_[static_cast<std::size_t>(editSlot_)] = uiPattern_;
+        if ((slotUsed_ & (1u << slot)) == 0)
+            slots_[static_cast<std::size_t>(slot)] = uiPattern_; // a new slot starts as a copy
+        slotUsed_ |= 1u << slot;
+        editSlot_ = slot;
+        uiPattern_ = slots_[static_cast<std::size_t>(slot)];
+        // Undo steps belong to the slot they were made in.
+        undo_.clear();
+        redo_.clear();
+        next = uiPattern_;
+    }
+    publishPattern(next);
+}
+
+int ZeroDrumProcessor::editSlot() const
+{
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    return editSlot_;
+}
+
+void ZeroDrumProcessor::setChainCount(int count)
+{
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        chainCount_ = juce::jlimit(1, zd::kMaxChain, count);
+        for (int i = 0; i < chainCount_; ++i)
+        {
+            if ((slotUsed_ & (1u << i)) == 0)
+                slots_[static_cast<std::size_t>(i)] = uiPattern_;
+            slotUsed_ |= 1u << i;
+        }
+        next = uiPattern_;
+    }
+    publishPattern(next);
+}
+
+int ZeroDrumProcessor::chainCount() const
+{
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    return chainCount_;
+}
+
+int ZeroDrumProcessor::playingSlot(double* localBeats) const
+{
+    const double beats = playheadBeats();
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    if (chainCount_ <= 1)
+    {
+        if (localBeats != nullptr)
+            *localBeats = beats;
+        return editSlot_;
+    }
+    // Same layout as zd::Sequencer: each slot plays for its length in bars, then the next.
+    std::array<double, zd::kMaxChain> len {};
+    double cycle = 0.0;
+    for (int i = 0; i < chainCount_; ++i)
+        cycle += len[static_cast<std::size_t>(i)] = 4.0 * zd::patternBars(slots_[static_cast<std::size_t>(i)]);
+    double pos = std::fmod(beats, cycle);
+    if (pos < 0.0)
+        pos += cycle;
+    int slot = 0;
+    while (slot < chainCount_ - 1 && pos >= len[static_cast<std::size_t>(slot)])
+        pos -= len[static_cast<std::size_t>(slot++)];
+    if (localBeats != nullptr)
+        *localBeats = pos;
+    return slot;
 }
 
 void ZeroDrumProcessor::setParam(const char* id, float plainValue)
@@ -978,6 +1191,7 @@ void ZeroDrumProcessor::loadStyleKit(zd::gen::Style style, int rootNote, std::ui
 
 void ZeroDrumProcessor::generateBeat()
 {
+    pushUndo();
     zd::gen::GenerateParams p;
     p.style = static_cast<zd::gen::Style>(static_cast<int>(value("genStyle")));
     p.density = value("genDensity");
@@ -1009,6 +1223,7 @@ void ZeroDrumProcessor::generateBeat()
 
 void ZeroDrumProcessor::mutateBeat()
 {
+    pushUndo();
     zd::Pattern next;
     {
         const std::lock_guard<std::mutex> lock(patternMutex_);
@@ -1021,6 +1236,7 @@ void ZeroDrumProcessor::mutateBeat()
 
 void ZeroDrumProcessor::addFillToBeat()
 {
+    pushUndo();
     zd::Pattern next;
     {
         const std::lock_guard<std::mutex> lock(patternMutex_);
@@ -1032,6 +1248,7 @@ void ZeroDrumProcessor::addFillToBeat()
 
 void ZeroDrumProcessor::makeBuildBeat()
 {
+    pushUndo();
     zd::Pattern next;
     {
         const std::lock_guard<std::mutex> lock(patternMutex_);
@@ -1058,6 +1275,17 @@ void ZeroDrumProcessor::getStateInformation(juce::MemoryBlock& destData)
     {
         const std::lock_guard<std::mutex> lock(patternMutex_);
         state.setProperty("pattern", juce::String(zd::serializePattern(uiPattern_)), nullptr);
+        slots_[static_cast<std::size_t>(editSlot_)] = uiPattern_;
+        for (int i = 0; i < zd::kMaxChain; ++i)
+        {
+            const juce::Identifier key("slot" + juce::String(i));
+            if ((slotUsed_ & (1u << i)) != 0)
+                state.setProperty(key, juce::String(zd::serializePattern(slots_[static_cast<std::size_t>(i)])), nullptr);
+            else
+                state.removeProperty(key, nullptr);
+        }
+        state.setProperty("editSlot", editSlot_, nullptr);
+        state.setProperty("chainCount", chainCount_, nullptr);
         state.setProperty("seed", juce::String(static_cast<juce::int64>(seed_)), nullptr);
     }
     for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
@@ -1082,6 +1310,14 @@ void ZeroDrumProcessor::setStateInformation(const void* data, int sizeInBytes)
     zd::Pattern loaded;
     const bool hasPattern = zd::deserializePattern(tree.getProperty("pattern").toString().toStdString(), loaded);
     const auto seed = static_cast<std::uint64_t>(tree.getProperty("seed", 1).toString().getLargeIntValue());
+    // Slots (older states have just "pattern", which becomes slot A).
+    std::array<zd::Pattern, zd::kMaxChain> slots {};
+    std::uint32_t used = 0;
+    for (int i = 0; i < zd::kMaxChain; ++i)
+        if (zd::deserializePattern(tree.getProperty("slot" + juce::String(i)).toString().toStdString(), slots[static_cast<std::size_t>(i)]))
+            used |= 1u << i;
+    const int editSlot = juce::jlimit(0, zd::kMaxChain - 1, static_cast<int>(tree.getProperty("editSlot", 0)));
+    const int chainCount = juce::jlimit(1, zd::kMaxChain, static_cast<int>(tree.getProperty("chainCount", 1)));
     apvts_.replaceState(tree);
     // Samples are saved by path; a file that moved leaves its pad empty.
     for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
@@ -1098,6 +1334,13 @@ void ZeroDrumProcessor::setStateInformation(const void* data, int sizeInBytes)
             const std::lock_guard<std::mutex> lock(patternMutex_);
             uiPattern_ = loaded;
             seed_ = seed;
+            editSlot_ = (used & (1u << editSlot)) != 0 ? editSlot : 0;
+            chainCount_ = chainCount;
+            slotUsed_ = used | (1u << editSlot_);
+            for (int i = 0; i < zd::kMaxChain; ++i)
+                slots_[static_cast<std::size_t>(i)] = (used & (1u << i)) != 0 ? slots[static_cast<std::size_t>(i)] : loaded;
+            undo_.clear();
+            redo_.clear();
         }
         publishPattern(loaded);
     }

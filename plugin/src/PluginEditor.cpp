@@ -6,14 +6,15 @@ MidiDragChip::MidiDragChip(ZeroDrumProcessor& owner, int lane, juce::String labe
     : owner_(owner), lane_(lane), label_(std::move(label))
 {
     setMouseCursor(juce::MouseCursor::DraggingHandCursor);
-    setTooltip(lane < 0 ? "Drag the whole beat into your DAW as a MIDI clip"
-                        : "Drag the " + label_ + " lane into your DAW as a MIDI clip");
+    setTooltip(lane == kAudioLoop ? "Drag the loop into your DAW as audio (WAV, through the bus)"
+               : lane < 0         ? "Drag the whole beat into your DAW as a MIDI clip"
+                                  : "Drag the " + label_ + " lane into your DAW as a MIDI clip");
 }
 
 void MidiDragChip::paint(juce::Graphics& g)
 {
     const auto r = getLocalBounds().toFloat().reduced(1.0f);
-    g.setColour(dragging_ ? juce::Colour(0xffff7a2f) : juce::Colour(lane_ < 0 ? 0xff3a5bd9 : 0xff2a2d36));
+    g.setColour(dragging_ ? juce::Colour(0xffff7a2f) : juce::Colour(lane_ == kAudioLoop ? 0xff1f8f84 : lane_ < 0 ? 0xff3a5bd9 : 0xff2a2d36));
     g.fillRoundedRectangle(r, 4.0f);
     g.setColour(juce::Colours::white);
     g.setFont(juce::FontOptions(12.0f));
@@ -24,7 +25,7 @@ void MidiDragChip::mouseDrag(const juce::MouseEvent& e)
 {
     if (dragging_ || e.getDistanceFromDragStart() < 6)
         return;
-    const auto file = owner_.writeMidiClip(lane_);
+    const auto file = lane_ == kAudioLoop ? owner_.writeLoopWav() : owner_.writeMidiClip(lane_);
     if (!file.existsAsFile())
         return;
     dragging_ = true;
@@ -137,7 +138,7 @@ void PartPanel::resized()
 }
 
 ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
-    : AudioProcessorEditor(owner), owner_(owner), generic_(owner), steps_(owner), pads_(owner), partPanel_(owner)
+    : AudioProcessorEditor(owner), owner_(owner), generic_(owner), mix_(owner), steps_(owner), pads_(owner), partPanel_(owner)
 {
     if (auto* param = dynamic_cast<juce::AudioParameterChoice*>(owner.state().getParameter("genStyle")))
         style_.addItemList(param->choices, 1);
@@ -151,6 +152,12 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     export_.onClick = [this] { chooseExportFolder(); };
     export_.setTooltip("Save the loop as a mix WAV, a WAV per part, MIDI per part and the pattern");
     kit_.onClick = [this] { showKitMenu(); };
+    undo_.onClick = [this] { owner_.undo(); };
+    redo_.onClick = [this] { owner_.redo(); };
+    undo_.setTooltip("Undo the last pattern change (Ctrl+Z)");
+    redo_.setTooltip("Redo (Ctrl+Shift+Z)");
+    undo_.setWantsKeyboardFocus(false);
+    redo_.setWantsKeyboardFocus(false);
     kit_.setTooltip("Save or load the whole kit: every sound, the bus and the pattern");
 
     dragLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
@@ -159,14 +166,44 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     chips_.push_back(std::make_unique<MidiDragChip>(owner_, -1, "Beat"));
     for (int i = 0; i < ZeroDrumProcessor::kNumStripParts; ++i)
         chips_.push_back(std::make_unique<MidiDragChip>(owner_, i, ZeroDrumProcessor::kStripNames[i]));
+    chips_.push_back(std::make_unique<MidiDragChip>(owner_, MidiDragChip::kAudioLoop, "Audio"));
     for (auto& chip : chips_)
         addAndMakeVisible(*chip);
 
     summary_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     summary_.setFont(juce::FontOptions(13.0f));
 
-    for (auto* c : std::initializer_list<juce::Component*> { &style_, &generate_, &mutate_, &fill_, &build_, &export_, &kit_, &summary_ })
+    for (auto* c : std::initializer_list<juce::Component*> { &style_, &generate_, &mutate_, &fill_, &build_, &export_, &kit_, &undo_, &redo_, &summary_ })
         addAndMakeVisible(*c);
+
+    // Pattern slots A..D and the chain that plays them in order.
+    for (int i = 0; i < zd::kMaxChain; ++i)
+    {
+        auto& b = slots_[static_cast<std::size_t>(i)];
+        b.setButtonText(juce::String::charToString(static_cast<juce::juce_wchar>('A' + i)));
+        b.setClickingTogglesState(false);
+        b.setWantsKeyboardFocus(false);
+        b.setColour(juce::TextButton::buttonOnColourId, zdui::kAccent);
+        b.setTooltip("Edit pattern " + b.getButtonText() + ". A new slot starts as a copy of the current one.");
+        b.onClick = [this, i] {
+            owner_.selectSlot(i);
+            steps_.refreshLanes();
+            refreshSlots();
+        };
+        addAndMakeVisible(b);
+    }
+    chain_.addItem("Loop slot", 1);
+    chain_.addItem("Chain A-B", 2);
+    chain_.addItem("Chain A-C", 3);
+    chain_.addItem("Chain A-D", 4);
+    chain_.setTooltip("Play the edited slot on its own, or chain slots A.. one after another");
+    chain_.onChange = [this] {
+        owner_.setChainCount(chain_.getSelectedId());
+        refreshSlots();
+    };
+    chain_.setWantsKeyboardFocus(false);
+    addAndMakeVisible(chain_);
+    refreshSlots();
 
     pads_.onSelect = [this](int part) { partPanel_.showPart(part); };
     pads_.onSampleChanged = [this](int part) {
@@ -199,6 +236,7 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     tabs_.setTabBarDepth(30);
     tabs_.addTab("Beat", zdui::kBackground, &steps_, false);
     tabs_.addTab("Pads", zdui::kBackground, &padsPage_, false);
+    tabs_.addTab("Mix", zdui::kBackground, &mix_, false);
     tabs_.addTab("Sound", zdui::kBackground, &generic_, false);
     addAndMakeVisible(tabs_);
 
@@ -211,6 +249,38 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
 void ZeroDrumEditor::timerCallback()
 {
     summary_.setText(owner_.describeBeat(), juce::dontSendNotification);
+    refreshSlots();
+    undo_.setEnabled(owner_.canUndo());
+    redo_.setEnabled(owner_.canRedo());
+}
+
+void ZeroDrumEditor::refreshSlots()
+{
+    const int edit = owner_.editSlot();
+    const int count = owner_.chainCount();
+    const int playing = owner_.isTransportRunning() ? owner_.playingSlot() : -1;
+    for (int i = 0; i < zd::kMaxChain; ++i)
+    {
+        auto& b = slots_[static_cast<std::size_t>(i)];
+        b.setToggleState(i == edit, juce::dontSendNotification);
+        // Slots in the chain read brighter; the one playing gets a marker.
+        const bool inChain = count > 1 && i < count;
+        b.setColour(juce::TextButton::textColourOffId, inChain ? juce::Colours::white : zdui::kDim);
+        const juce::String name = juce::String::charToString(static_cast<juce::juce_wchar>('A' + i));
+        b.setButtonText(i == playing && count > 1 ? juce::String::fromUTF8("\xe2\x96\xb8") + name : name);
+    }
+    if (chain_.getSelectedId() != count)
+        chain_.setSelectedId(count, juce::dontSendNotification);
+}
+
+bool ZeroDrumEditor::keyPressed(const juce::KeyPress& key)
+{
+    // Works when the host passes keys to the plugin window (the standalone always does).
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Z')
+        return key.getModifiers().isShiftDown() ? owner_.redo() : owner_.undo();
+    if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Y')
+        return owner_.redo();
+    return false;
 }
 
 void ZeroDrumEditor::showKitMenu()
@@ -318,6 +388,17 @@ void ZeroDrumEditor::resized()
         chip->setBounds(drag.removeFromLeft(chip.get() == chips_.front().get() ? 64 : 56));
         drag.removeFromLeft(4);
     }
-    summary_.setBounds(area.removeFromTop(24).reduced(12, 0));
+    redo_.setBounds(drag.removeFromRight(52));
+    drag.removeFromRight(4);
+    undo_.setBounds(drag.removeFromRight(52));
+    auto row = area.removeFromTop(26).reduced(8, 2);
+    chain_.setBounds(row.removeFromRight(104));
+    row.removeFromRight(4);
+    for (int i = zd::kMaxChain - 1; i >= 0; --i)
+    {
+        slots_[static_cast<std::size_t>(i)].setBounds(row.removeFromRight(30));
+        row.removeFromRight(2);
+    }
+    summary_.setBounds(row.reduced(4, 0));
     tabs_.setBounds(area);
 }

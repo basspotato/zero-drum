@@ -50,7 +50,7 @@ TEST_CASE("MIDI out: the beat plays out as balanced note on/off pairs")
         juce::MidiBuffer midi;
         midi.ensureSize(4096);
         std::map<std::pair<int, int>, long long> held; // (channel, note) -> on time
-        int ons = 0, offs = 0, sub = 0;
+        int ons = 0, offs = 0, sub = 0, drums = 0;
         long long pos = 0;
         bool overlapped = false, orphanOff = false, tooShort = false;
         for (; pos < static_cast<long long>(sr * 4); pos += block)
@@ -66,6 +66,7 @@ TEST_CASE("MIDI out: the beat plays out as balanced note on/off pairs")
                 {
                     ++ons;
                     sub += m.getChannel() == ZeroDrumProcessor::kSubMidiChannel ? 1 : 0;
+                    drums += m.getChannel() == ZeroDrumProcessor::kDrumMidiChannel ? 1 : 0;
                     overlapped = overlapped || held.count(key) != 0;
                     held[key] = t;
                 }
@@ -98,6 +99,7 @@ TEST_CASE("MIDI out: the beat plays out as balanced note on/off pairs")
         MESSAGE("block " << block << ": " << ons << " notes, " << sub << " on the 808 channel");
         CHECK(ons > 16);
         CHECK(sub > 0);
+        CHECK(drums + sub == ons); // no melodic kick in the default beat
         CHECK(ons == offs);
         CHECK(held.empty());
         CHECK_FALSE(overlapped);

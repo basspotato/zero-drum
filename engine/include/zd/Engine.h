@@ -160,6 +160,8 @@ public:
     /// start of its next block. Returns false if the audio thread is copying the previous
     /// one right now; call again.
     bool submitPattern(const Pattern& pattern) noexcept;
+    /// The same hand-off for a chain of up to four patterns (see Chain).
+    bool submitChain(const Chain& chain) noexcept;
 
     double sampleRate() const noexcept { return sampleRate_; }
 
@@ -210,7 +212,7 @@ private:
     void retireSample(int partIndex) noexcept;
 
     enum PendingState : int { Empty = 0, Writing = 1, Ready = 2, Reading = 3 };
-    Pattern pendingPattern_ {};
+    Chain pendingChain_ {};
     std::atomic<int> pendingState_ { Empty };
 
     std::array<Part, kMaxParts> parts_;
@@ -235,7 +237,8 @@ private:
     static constexpr int kSweepChunk = 32;
     dsp::Svf sweepL_, sweepR_;
     long long sweepChunk_ = -1;
-    bool sweepActive_ = false;
+    bool sweepActive_ = false; ///< the transport ran last block (chunk state is valid)
+    bool sweepOn_ = false;     ///< the filter was in the path at the end of the last block
 
     // Sample hand-off per part (see submitSample). owned_ mirrors what the audio thread's
     // part holds, so the audio thread never drops the last reference to a sample.

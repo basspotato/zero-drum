@@ -116,3 +116,55 @@ TEST_CASE("Sequencer: stopped transport emits nothing")
     Transport t { false, 120.0, 0.0 };
     CHECK(seq.collect(t, 48000.0, 512, events.data(), 16) == 0);
 }
+
+TEST_CASE("Chain: slots play one after another, each from its first step, at any block size")
+{
+    // A = 1 bar with a kick on every beat, B = 2 bars with a single snare at its start.
+    Chain chain;
+    chain.count = 2;
+    Pattern& a = chain.slots[0];
+    a = Pattern {};
+    for (int s : { 0, 4, 8, 12 })
+        a.lanes[0].steps[static_cast<std::size_t>(s)] = Step { true, 1.0f, 1.0f, 0.0f, -1, 1 };
+    Pattern& b = chain.slots[1];
+    b = Pattern {};
+    b.lanes[1].length = 32;
+    b.lanes[1].steps[0] = Step { true, 1.0f, 1.0f, 0.0f, -1, 1 };
+    CHECK(patternBars(a) == 1);
+    CHECK(patternBars(b) == 2);
+
+    auto run = [&](int block) {
+        Sequencer seq;
+        seq.setChain(chain);
+        std::vector<std::pair<long long, int>> hits;
+        std::array<NoteEvent, 256> ev {};
+        const double sr = 48000.0;
+        for (long long pos = 0; pos < static_cast<long long>(sr * 12); pos += block)
+        {
+            Transport t { true, 120.0, static_cast<double>(pos) * 120.0 / (60.0 * sr) };
+            const int n = seq.collect(t, sr, block, ev.data(), static_cast<int>(ev.size()));
+            for (int i = 0; i < n; ++i)
+            {
+                const long long at = pos + ev[static_cast<std::size_t>(i)].offset;
+                if (at < static_cast<long long>(sr * 12)) // the last block can run past the window
+                    hits.emplace_back(at, ev[static_cast<std::size_t>(i)].part);
+            }
+        }
+        std::sort(hits.begin(), hits.end());
+        return hits;
+    };
+    const auto ref = run(64);
+    // At 120 BPM a bar is 2 s = 96000 samples; the chain is 3 bars = 6 s, so 12 s is two cycles.
+    std::vector<std::pair<long long, int>> expected;
+    for (int cycle = 0; cycle < 2; ++cycle)
+    {
+        const long long base = cycle * 288000LL;
+        for (int k = 0; k < 4; ++k)
+            expected.emplace_back(base + k * 24000LL, 0);
+        expected.emplace_back(base + 96000LL, 1);
+    }
+    CHECK(ref == expected);
+    for (int block : { 1, 100, 512, 4096, 9999 })
+        CHECK(run(block) == ref);
+    CHECK(&Sequencer {}.patternAt(1.0) != nullptr);
+}

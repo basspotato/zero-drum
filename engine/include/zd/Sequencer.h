@@ -46,6 +46,18 @@ struct Pattern
     Sweep sweep {};
 };
 
+/// Up to four patterns played one after another (A, B, C, D), each for its own loop length
+/// (its longest lane that plays, in whole bars). count 1 = just slot A, looping.
+inline constexpr int kMaxChain = 4;
+struct Chain
+{
+    std::array<Pattern, kMaxChain> slots {};
+    int count = 1;
+};
+
+/// Bars in one loop of a pattern: its longest lane with a hit, rounded up to whole bars (1..16).
+int patternBars(const Pattern& pattern) noexcept;
+
 /// Sample-accurate step sequencer.
 ///
 /// Every step's time is computed in beats and converted to an absolute sample index with
@@ -54,8 +66,26 @@ struct Pattern
 class Sequencer
 {
 public:
-    Pattern& pattern() noexcept { return pattern_; }
-    const Pattern& pattern() const noexcept { return pattern_; }
+    /// Slot A: the pattern that plays when no chain is set.
+    Pattern& pattern() noexcept { return slots_[0]; }
+    const Pattern& pattern() const noexcept { return slots_[0]; }
+
+    /// The chain: slots 0..count-1 play in order, each for patternBars() bars, then repeat.
+    /// Realtime safe (fixed storage); the engine sets it from its lock-free hand-off.
+    void setChain(const Chain& chain) noexcept;
+    int chainCount() const noexcept { return chainCount_; }
+    const Pattern& slot(int i) const noexcept { return slots_[static_cast<std::size_t>(i)]; }
+    /// The pattern playing at song position `ppq` (beats).
+    const Pattern& patternAt(double ppq) const noexcept;
+    /// The beat on which the pass playing at `ppq` began (0 without a chain).
+    double passStartAt(double ppq) const noexcept;
+
+    /// Sets the swing of every slot (it is a global setting, not part of a slot).
+    void setSwing(double swing) noexcept
+    {
+        for (auto& p : slots_)
+            p.swing = swing;
+    }
 
     void setSeed(std::uint64_t seed) noexcept { seed_ = seed; }
     std::uint64_t seed() const noexcept { return seed_; }
@@ -65,15 +95,23 @@ public:
     int collect(const Transport& transport, double sampleRate, int numSamples,
                 NoteEvent* out, int capacity) const noexcept;
 
-    /// Time of absolute step `k` in beats, including swing and the step's micro offset.
-    double stepTime(int lane, std::int64_t k) const noexcept;
+    /// Time of absolute step `k` of slot A in beats, including swing and the step's micro offset.
+    double stepTime(int lane, std::int64_t k) const noexcept { return stepTimeIn(slots_[0], lane, k); }
+    static double stepTimeIn(const Pattern& pattern, int lane, std::int64_t k) noexcept;
 
     /// Whether absolute step `k` of `lane` passes its probability draw (seeded, block-size free).
     bool passesProbability(int lane, std::int64_t k, float probability) const noexcept;
 
 private:
+    int collectPattern(const Pattern& pattern, const Transport& transport, double sampleRate, int numSamples,
+                       NoteEvent* out, int capacity) const noexcept;
+    /// Where `ppq` falls in the chain: the slot, and the beat that slot's current pass began on.
+    void locate(double ppq, int& slot, double& slotStart, double& slotEnd) const noexcept;
 
-    Pattern pattern_;
+    std::array<Pattern, kMaxChain> slots_ {};
+    std::array<double, kMaxChain> slotBeats_ { 4.0, 4.0, 4.0, 4.0 };
+    double chainBeats_ = 4.0;
+    int chainCount_ = 1;
     std::uint64_t seed_ = 1;
 };
 

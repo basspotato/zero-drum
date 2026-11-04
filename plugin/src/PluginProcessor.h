@@ -68,6 +68,9 @@ public:
     /// Writes the current pattern as a MIDI clip for drag-and-drop into the DAW: all lanes
     /// (lane = -1) or one. Returns the temp file, or an invalid File if nothing plays.
     juce::File writeMidiClip(int lane) const;
+    /// Renders one loop of the mix (through the bus, like playback) to a temp WAV for
+    /// drag-and-drop into the DAW. Returns an invalid File on failure.
+    juce::File writeLoopWav() const;
 
     /// Tempo used for exports: the free-run tempo, else the host's last reported tempo.
     double exportBpm() const noexcept;
@@ -79,10 +82,34 @@ public:
     /// stopped) until called with part -1.
     void setNoteRepeat(int part, float velocity) noexcept;
     std::uint32_t partHits(int part) const noexcept { return engine_.hitCount(part); }
+    /// Glue compressor gain reduction right now, in dB, for the Mix tab meter.
+    float glueReductionDb() const noexcept { return engine_.glueReductionDb(); }
     /// A copy of the pattern the UI edits, and an edit that is applied, saved and sent to
     /// the audio thread.
     zd::Pattern currentPattern() const;
     void editPattern(const std::function<void(zd::Pattern&)>& edit);
+    /// Pattern undo: call pushUndo() once at the start of a gesture (a click, a drag, a button);
+    /// the generator buttons and part loads do it themselves. Up to kUndoDepth steps.
+    void pushUndo();
+    bool undo();
+    bool redo();
+    bool canUndo() const;
+    bool canRedo() const;
+    static constexpr std::size_t kUndoDepth = 64;
+    /// Lane tools: a Euclidean rhythm, a new length (polymeters), and humanize (one lane, or
+    /// every unlocked lane with onlyLane -1).
+    void euclidLane(int lane, int hits);
+    void setLaneLength(int lane, int length);
+    void humanizeBeat(float amount, int onlyLane = -1);
+    /// Pattern slots A..D. The UI edits one slot; with a chain of 2..4, slots A.. play in order
+    /// (each for its own length in bars), otherwise the edited slot loops on its own. A slot
+    /// opened for the first time starts as a copy of the one being edited.
+    void selectSlot(int slot);
+    int editSlot() const;
+    void setChainCount(int count);
+    int chainCount() const;
+    /// The slot playing at the playhead, and the playhead in beats from that slot's pass start.
+    int playingSlot(double* localBeats = nullptr) const;
     /// Where the audio thread last was, in beats, and whether the transport runs.
     double playheadBeats() const noexcept { return playheadBeats_.load(std::memory_order_relaxed); }
     bool isTransportRunning() const noexcept { return transportRunning_.load(std::memory_order_relaxed); }
@@ -91,6 +118,7 @@ public:
     /// Matches zd::exporting::defaultMidiNote, so dragged clips play back on the right pads.
     static int noteToPart(int note) noexcept;
 
+    static constexpr int kDrumMidiChannel = 10; ///< MIDI out for drum parts (General MIDI drums)
     static constexpr int kSubMidiChannel = 2;
     static constexpr int kKickMidiChannel = 3; ///< plays the kick melodically
     static constexpr int kNumStripParts = 5;
@@ -160,6 +188,12 @@ private:
     // The pattern as the UI and the saved state see it; the engine gets copies via submitPattern.
     mutable std::mutex patternMutex_;
     zd::Pattern uiPattern_;
+    std::array<zd::Pattern, zd::kMaxChain> slots_ {}; ///< guarded by patternMutex_; slots_[editSlot_] mirrors uiPattern_
+    int editSlot_ = 0;                                ///< guarded by patternMutex_
+    int chainCount_ = 1;                              ///< guarded by patternMutex_
+    std::uint32_t slotUsed_ = 1u;                     ///< guarded by patternMutex_
+    std::vector<zd::Pattern> undo_, redo_; ///< guarded by patternMutex_
+    std::uint64_t humanizeCount_ = 0;      ///< guarded by patternMutex_
     std::uint64_t seed_ = 1;
 
     std::atomic<double> hostBpm_ { 120.0 };
@@ -182,6 +216,8 @@ private:
     std::array<juce::File, zd::kMaxParts> padFiles_ {};
     std::array<std::array<std::atomic<float>*, kNumPadSuffixes>, zd::kMaxParts> padParams_ {};
     void applyPadSamples(zd::Engine& engine) const;
+    /// A prepared offline engine with the current sounds, bus, samples and pattern.
+    std::shared_ptr<zd::Engine> makeExportEngine() const;
 
     // MIDI out: the sequencer's hits as notes for the host (audio thread only).
     struct PendingNoteOff

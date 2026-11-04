@@ -298,3 +298,48 @@ TEST_CASE("Export: every drum part gets its own MIDI note in 36..51")
         CHECK(seen.insert(note).second);
     }
 }
+
+TEST_CASE("Export: with the glue on, stems are taken before it and still sum to the dry bus")
+{
+    auto e = makeEngine(gen::Style::BoomBap, 3);
+    dsp::GlueSettings glue;
+    glue.on = true;
+    glue.thresholdDb = -30.0f; // squeeze hard, so a stem through the glue would not add up
+    glue.ratio = 6.0f;
+    e->setGlue(glue);
+    exporting::ExportOptions opt;
+    opt.bars = 1;
+    opt.bpm = 92.0;
+    const fs::path dir = tempDir("glue");
+    REQUIRE(exporting::exportLoop(*e, opt, dir).ok);
+    CHECK(e->glue().on); // restored afterwards
+    const auto glued = wavSamples(dir / "mix.wav");
+
+    // The same loop with the glue off, mix only.
+    glue.on = false;
+    e->setGlue(glue);
+    opt.mixOnly = true;
+    const fs::path dryDir = tempDir("glue-dry");
+    const auto res = exporting::exportLoop(*e, opt, dryDir);
+    REQUIRE(res.ok);
+    CHECK(res.files.size() == 1);
+    CHECK_FALSE(fs::exists(dryDir / "parts"));
+    const auto dry = wavSamples(dryDir / "mix.wav");
+    REQUIRE(dry.size() == glued.size());
+
+    std::vector<double> sum(dry.size(), 0.0);
+    for (const auto& entry : fs::directory_iterator(dir / "parts"))
+    {
+        const auto part = wavSamples(entry.path());
+        for (std::size_t i = 0; i < part.size(); ++i)
+            sum[i] += part[i];
+    }
+    double worstDry = 0.0, worstGlued = 0.0;
+    for (std::size_t i = 0; i < dry.size(); ++i)
+    {
+        worstDry = std::max(worstDry, std::abs(sum[i] - dry[i]));
+        worstGlued = std::max(worstGlued, std::abs(sum[i] - glued[i]));
+    }
+    CHECK(worstDry < 1.0e-5);
+    CHECK(worstGlued > 1.0e-3); // the glue really did something to the mix
+}

@@ -515,6 +515,44 @@ void addFill(Pattern& pattern, float intensity, std::uint64_t seed, std::uint32_
     }
 }
 
+void euclid(Lane& lane, int hits, int rotate) noexcept
+{
+    const int n = std::clamp(lane.length, 1, kMaxStepsPerLane);
+    const int k = std::clamp(hits, 0, n);
+    for (int i = 0; i < n; ++i)
+        lane.steps[static_cast<std::size_t>(i)] = Step {};
+    for (int j = 0; j < k; ++j)
+    {
+        // The j-th of k hits lands on ceil(j * n / k): Bjorklund's spacing, phased so the
+        // longest gaps come first (3 over 8 is the tresillo, x..x..x.).
+        const int at = ((j * n + k - 1) / k + rotate % n + n) % n;
+        lane.steps[static_cast<std::size_t>(at)] = Step { true, j == 0 ? 0.95f : 0.8f, 1.0f, 0.0f, -1, 1 };
+    }
+}
+
+void humanize(Pattern& pattern, float amount, std::uint64_t seed, std::uint32_t lockMask) noexcept
+{
+    const float a = std::clamp(amount, 0.0f, 1.0f);
+    if (a <= 0.0f)
+        return;
+    for (int lane = 0; lane < kMaxParts; ++lane)
+    {
+        if (locked(lockMask, lane))
+            continue;
+        dsp::Random rng(dsp::hash64(seed ^ (0x4855u + static_cast<std::uint64_t>(lane) * 0x9E3779B97F4A7C15ull)));
+        Lane& l = pattern.lanes[static_cast<std::size_t>(lane)];
+        for (int i = 0; i < std::clamp(l.length, 0, kMaxStepsPerLane); ++i)
+        {
+            Step& st = l.steps[static_cast<std::size_t>(i)];
+            const double t = rng.bipolar(), v = rng.bipolar(); // drawn for every step: stable streams
+            if (!st.on)
+                continue;
+            st.microOffset = std::clamp(st.microOffset + static_cast<float>(0.06 * a * t), -0.5f, 0.5f);
+            st.velocity = std::clamp(st.velocity * (1.0f + static_cast<float>(0.12 * a * v)), 0.05f, 1.0f);
+        }
+    }
+}
+
 void makeBuild(Pattern& pattern, int bars, std::uint32_t lockMask) noexcept
 {
     const int n = std::clamp(bars, 1, kMaxStepsPerLane / kSteps) * kSteps;

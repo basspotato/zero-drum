@@ -5,6 +5,7 @@
 #include "zd/Engine.h"
 
 #include <atomic>
+#include <cmath>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -117,4 +118,26 @@ TEST_CASE("Samples: hand-offs from another thread while audio runs stay consiste
     CHECK(finite);
     for (int p = 5; p < kMaxParts; ++p)
         CHECK(e->part(p).type == EngineType::Sample);
+}
+
+TEST_CASE("Samples: prepareOneShot trims silence, keeps the attack and normalizes")
+{
+    SampleData s;
+    s.sampleRate = 48000.0;
+    s.samples.assign(48000, 0.0f);
+    for (int i = 0; i < 4800; ++i) // 100 ms of sound starting at 200 ms
+        s.samples[static_cast<std::size_t>(9600 + i)] = 0.25f * std::sin(0.05f * static_cast<float>(i)) + (i == 0 ? 0.01f : 0.0f);
+    REQUIRE(prepareOneShot(s, -1.0f));
+    CHECK(s.samples.size() < 4800 + 48 + 96 + 10);
+    CHECK(s.samples.size() > 4700);
+    // 1 ms of lead-in, then the attack.
+    CHECK(std::abs(s.samples[47]) < 1e-6f);
+    CHECK(std::abs(s.samples[48]) > 0.001f);
+    CHECK(test::peak(s.samples) == doctest::Approx(std::pow(10.0, -1.0 / 20.0)).epsilon(1e-4));
+    CHECK(std::abs(s.samples.back()) < 1e-3f); // faded, no click
+
+    SampleData silent;
+    silent.samples.assign(1000, 0.0f);
+    CHECK_FALSE(prepareOneShot(silent));
+    CHECK(silent.samples.size() == 1000);
 }

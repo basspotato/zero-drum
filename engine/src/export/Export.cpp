@@ -290,8 +290,12 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
 {
     ExportResult result;
     std::error_code ec;
-    fs::create_directories(directory / "parts", ec);
-    fs::create_directories(directory / "midi", ec);
+    fs::create_directories(directory, ec);
+    if (!options.mixOnly)
+    {
+        fs::create_directories(directory / "parts", ec);
+        fs::create_directories(directory / "midi", ec);
+    }
     if (ec)
     {
         result.error = "could not create " + directory.string() + ": " + ec.message();
@@ -322,7 +326,8 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
         Engine& engine;
         std::array<bool, kMaxParts> saved {};
         Engine::MasterClipSettings clipSettings;
-        explicit MuteGuard(Engine& e) : engine(e), clipSettings(e.masterClip())
+        dsp::GlueSettings glueSettings;
+        explicit MuteGuard(Engine& e) : engine(e), clipSettings(e.masterClip()), glueSettings(e.glue())
         {
             for (int i = 0; i < kMaxParts; ++i)
                 saved[static_cast<std::size_t>(i)] = engine.part(i).mix.mute;
@@ -330,6 +335,7 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
         ~MuteGuard()
         {
             engine.setMasterClip(clipSettings.clipOn, clipSettings.driveDb, clipSettings.ceilingDb);
+            engine.setGlue(glueSettings);
             for (int i = 0; i < kMaxParts; ++i)
                 engine.part(i).mix.mute = saved[static_cast<std::size_t>(i)];
             engine.reset();
@@ -339,12 +345,17 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
     } guard(engine);
     const auto& savedMute = guard.saved;
 
-    // Part files are taken before the master clipper (its delay stays, so timing matches);
-    // the mix goes through it. So the parts sum exactly to an unclipped mix, the way stems
+    // Part files are taken before the bus's nonlinear stages, the glue compressor and the
+    // master clipper (the clipper's delay stays, so timing matches); the mix goes through
+    // them. So the parts sum exactly to the mix without glue and clipping, the way stems
     // from a mix bus do.
     const Engine::MasterClipSettings clip = engine.masterClip();
+    const dsp::GlueSettings glue = engine.glue();
     auto render = [&](int solo, std::vector<float>& l, std::vector<float>& r) {
         engine.setMasterClip(solo < 0 && clip.clipOn, clip.driveDb, clip.ceilingDb);
+        dsp::GlueSettings g = glue;
+        g.on = solo < 0 && glue.on;
+        engine.setGlue(g);
         for (int i = 0; i < kMaxParts; ++i)
             engine.part(i).mix.mute = solo >= 0 ? (i != solo) : savedMute[static_cast<std::size_t>(i)];
         engine.reset();
@@ -364,6 +375,11 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const fs::
         return result;
     }
     result.files.push_back(directory / "mix.wav");
+    if (options.mixOnly)
+    {
+        result.ok = true;
+        return result;
+    }
 
     std::vector<MidiTrack> allTracks;
     for (int i : playing)

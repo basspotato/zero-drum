@@ -368,9 +368,7 @@ void Engine::collectSamples() noexcept
 
 void Engine::applySweep(const Transport& transport, float* left, float* right, int numSamples) noexcept
 {
-    const Pattern& pattern = sequencer_.pattern();
-    const Sweep& sw = pattern.sweep;
-    if (sw.steps <= 0 || !transport.playing || transport.bpm <= 0.0)
+    if (!transport.playing || transport.bpm <= 0.0)
     {
         if (sweepActive_)
         {
@@ -381,31 +379,55 @@ void Engine::applySweep(const Transport& transport, float* left, float* right, i
         }
         return;
     }
-    sweepActive_ = true;
     const double samplesPerBeat = 60.0 * sampleRate_ / transport.bpm;
     const long long first = std::llround(transport.ppqPosition * samplesPerBeat);
-    const double loopSamples = static_cast<double>(sw.steps) * pattern.stepBeats * samplesPerBeat;
-    const double lo = std::clamp(static_cast<double>(sw.startHz), 20.0, 0.45 * sampleRate_);
-    const double hi = std::clamp(static_cast<double>(sw.endHz), lo, 0.45 * sampleRate_);
-    const double q = 0.7071 + 2.3 * std::clamp(static_cast<double>(sw.resonance), 0.0, 1.0);
+    bool on = sweepActive_ && sweepChunk_ >= 0 ? sweepOn_ : false;
     for (int n = 0; n < numSamples; ++n)
     {
         const long long at = first + n;
         const long long chunk = (at >= 0 ? at : at - (kSweepChunk - 1)) / kSweepChunk;
         if (chunk != sweepChunk_)
         {
+            // Everything is decided from the chunk's absolute position: which pattern plays
+            // there (a chain may change it), where its pass began, and so the cutoff.
             sweepChunk_ = chunk;
-            double pos = std::fmod(static_cast<double>(chunk * kSweepChunk), loopSamples) / loopSamples;
-            if (pos < 0.0)
-                pos += 1.0;
-            // Even in log-frequency with a slow start: most of the rise lands in the last bars.
-            const double hz = lo * std::pow(hi / lo, std::pow(pos, 1.5));
-            sweepL_.setCoefficients(hz, q, sampleRate_);
-            sweepR_.setCoefficients(hz, q, sampleRate_);
+            const double beats = static_cast<double>(chunk * kSweepChunk) / samplesPerBeat;
+            const Pattern& pattern = sequencer_.patternAt(beats);
+            const Sweep& sw = pattern.sweep;
+            const bool wasOn = on;
+            on = sw.steps > 0;
+            if (!on)
+            {
+                if (wasOn)
+                {
+                    sweepL_.reset();
+                    sweepR_.reset();
+                }
+            }
+            else
+            {
+                const double loopSamples = static_cast<double>(sw.steps) * pattern.stepBeats * samplesPerBeat;
+                const auto passStart = static_cast<double>(std::llround(sequencer_.passStartAt(beats) * samplesPerBeat));
+                double pos = std::fmod(static_cast<double>(chunk * kSweepChunk) - passStart, loopSamples) / loopSamples;
+                if (pos < 0.0)
+                    pos += 1.0;
+                const double lo = std::clamp(static_cast<double>(sw.startHz), 20.0, 0.45 * sampleRate_);
+                const double hi = std::clamp(static_cast<double>(sw.endHz), lo, 0.45 * sampleRate_);
+                const double q = 0.7071 + 2.3 * std::clamp(static_cast<double>(sw.resonance), 0.0, 1.0);
+                // Even in log-frequency with a slow start: most of the rise lands in the last bars.
+                const double hz = lo * std::pow(hi / lo, std::pow(pos, 1.5));
+                sweepL_.setCoefficients(hz, q, sampleRate_);
+                sweepR_.setCoefficients(hz, q, sampleRate_);
+            }
         }
-        left[n] = static_cast<float>(sweepL_.process(left[n]).high);
-        right[n] = static_cast<float>(sweepR_.process(right[n]).high);
+        if (on)
+        {
+            left[n] = static_cast<float>(sweepL_.process(left[n]).high);
+            right[n] = static_cast<float>(sweepR_.process(right[n]).high);
+        }
     }
+    sweepOn_ = on;
+    sweepActive_ = true;
 }
 
 void Engine::applyPendingSamples() noexcept
@@ -433,7 +455,24 @@ bool Engine::submitPattern(const Pattern& pattern) noexcept
         if (!pendingState_.compare_exchange_strong(expected, Writing, std::memory_order_acquire))
             return false;
     }
-    pendingPattern_ = pattern;
+    pendingChain_.slots[0] = pattern;
+    pendingChain_.count = 1;
+    pendingState_.store(Ready, std::memory_order_release);
+    return true;
+}
+
+bool Engine::submitChain(const Chain& chain) noexcept
+{
+    int expected = Empty;
+    if (!pendingState_.compare_exchange_strong(expected, Writing, std::memory_order_acquire))
+    {
+        expected = Ready;
+        if (!pendingState_.compare_exchange_strong(expected, Writing, std::memory_order_acquire))
+            return false;
+    }
+    pendingChain_.count = std::clamp(chain.count, 1, kMaxChain);
+    for (int i = 0; i < pendingChain_.count; ++i)
+        pendingChain_.slots[static_cast<std::size_t>(i)] = chain.slots[static_cast<std::size_t>(i)];
     pendingState_.store(Ready, std::memory_order_release);
     return true;
 }
@@ -443,7 +482,7 @@ void Engine::applyPendingPattern() noexcept
     int expected = Ready;
     if (!pendingState_.compare_exchange_strong(expected, Reading, std::memory_order_acquire))
         return;
-    sequencer_.pattern() = pendingPattern_;
+    sequencer_.setChain(pendingChain_);
     pendingState_.store(Empty, std::memory_order_release);
 }
 

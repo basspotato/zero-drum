@@ -101,6 +101,20 @@ void StepGrid::paint(juce::Graphics& g)
                 g.fillRoundedRectangle(r.withTrimmedTop(r.getHeight() * (1.0f - v)), 3.0f);
                 g.setColour(colour);
                 g.drawRoundedRectangle(r, 3.0f, 1.0f);
+                if (std::abs(step.microOffset) > 0.005f)
+                {
+                    // Timing nudge: a tick at the bottom, left = early, right = late.
+                    const float x = r.getCentreX() + step.microOffset * r.getWidth();
+                    g.setColour(zdui::kText);
+                    g.fillRect(juce::Rectangle<float>(x - 1.0f, r.getBottom() - 6.0f, 2.0f, 5.0f));
+                }
+                if (step.probability < 0.995f && r.getWidth() > 22.0f)
+                {
+                    g.setColour(zdui::kText.withAlpha(0.85f));
+                    g.setFont(juce::FontOptions(9.0f));
+                    g.drawText(juce::String(juce::roundToInt(step.probability * 100.0f)) + "%", r.withHeight(12.0f).toNearestInt(),
+                               juce::Justification::centred);
+                }
                 for (int k = 1; k < step.ratchet; ++k)
                 {
                     const float x = r.getX() + r.getWidth() * k / step.ratchet;
@@ -148,9 +162,10 @@ void StepGrid::timerCallback()
         if (changed)
             pattern_ = latest;
     }
-    const int step = owner_.isTransportRunning()
-                         ? static_cast<int>(std::floor(owner_.playheadBeats() / std::max(1.0e-3, pattern_.stepBeats)))
-                         : -1;
+    // In a chain, the playhead shows only while the slot being edited is the one playing.
+    double local = 0.0;
+    const bool here = owner_.isTransportRunning() && owner_.playingSlot(&local) == owner_.editSlot();
+    const int step = here ? static_cast<int>(std::floor(local / std::max(1.0e-3, pattern_.stepBeats))) : -1;
     if (step != playStep_)
     {
         playStep_ = step;
@@ -162,6 +177,11 @@ void StepGrid::timerCallback()
 
 void StepGrid::mouseDown(const juce::MouseEvent& e)
 {
+    if (e.position.x < static_cast<float>(kHeaderWidth) + 6.0f)
+    {
+        showLaneMenu(e.position);
+        return;
+    }
     int lane = 0, step = 0;
     if (!cellAt(e.position, lane, step))
         return;
@@ -170,16 +190,20 @@ void StepGrid::mouseDown(const juce::MouseEvent& e)
     {
         if (!s.on)
             return;
+        owner_.pushUndo();
         const int ratchet = s.ratchet % zd::kMaxRatchet + 1;
         s.ratchet = ratchet;
         owner_.editPattern([=](zd::Pattern& p) { p.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(step)].ratchet = ratchet; });
         repaint();
         return;
     }
+    owner_.pushUndo();
     downLane_ = lane;
     downStep_ = step;
     downWasOn_ = s.on;
     moved_ = false;
+    // Alt drags probability, Ctrl (Cmd on a Mac) drags timing; a plain drag sets velocity.
+    dragMode_ = e.mods.isAltDown() ? DragMode::Probability : e.mods.isCommandDown() ? DragMode::Timing : DragMode::Velocity;
     if (!s.on)
     {
         s = zd::Step { true, 0.9f, 1.0f, 0.0f, -1, 1 };
@@ -188,19 +212,91 @@ void StepGrid::mouseDown(const juce::MouseEvent& e)
         owner_.auditionPart(lane, added.velocity);
     }
     downVelocity_ = s.velocity;
+    downProbability_ = s.probability;
+    downOffset_ = s.microOffset;
     repaint();
 }
 
 void StepGrid::mouseDrag(const juce::MouseEvent& e)
 {
-    if (downLane_ < 0 || std::abs(e.getDistanceFromDragStartY()) < 3)
+    if (downLane_ < 0)
+        return;
+    const bool horizontal = dragMode_ == DragMode::Timing;
+    if (std::abs(horizontal ? e.getDistanceFromDragStartX() : e.getDistanceFromDragStartY()) < 3)
         return;
     moved_ = true;
-    const float v = juce::jlimit(0.05f, 1.0f, downVelocity_ - e.getDistanceFromDragStartY() / 120.0f);
     const int lane = downLane_, step = downStep_;
-    pattern_.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(step)].velocity = v;
-    owner_.editPattern([=](zd::Pattern& p) { p.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(step)].velocity = v; });
+    auto& st = pattern_.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(step)];
+    switch (dragMode_)
+    {
+        case DragMode::Velocity:
+            st.velocity = juce::jlimit(0.05f, 1.0f, downVelocity_ - static_cast<float>(e.getDistanceFromDragStartY()) / 120.0f);
+            break;
+        case DragMode::Probability:
+            st.probability = juce::jlimit(0.0f, 1.0f, downProbability_ - static_cast<float>(e.getDistanceFromDragStartY()) / 120.0f);
+            break;
+        case DragMode::Timing:
+        {
+            const float cell = juce::jmax(4.0f, cellBounds(0, 0).getWidth());
+            st.microOffset = juce::jlimit(-0.5f, 0.5f, downOffset_ + static_cast<float>(e.getDistanceFromDragStartX()) / (2.0f * cell));
+            break;
+        }
+    }
+    const zd::Step edited = st;
+    owner_.editPattern([=](zd::Pattern& p) { p.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(step)] = edited; });
     repaint();
+}
+
+void StepGrid::showLaneMenu(juce::Point<float> p)
+{
+    const auto area = getLocalBounds().toFloat().reduced(6.0f);
+    if (rows() == 0 || !area.contains(p))
+        return;
+    const int row = juce::jlimit(0, rows() - 1, static_cast<int>((p.y - area.getY()) / (area.getHeight() / static_cast<float>(rows()))));
+    const int lane = rows_[static_cast<std::size_t>(row)];
+    const int length = pattern_.lanes[static_cast<std::size_t>(lane)].length;
+
+    juce::PopupMenu lengths;
+    for (int n : { 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24, 32, 48, 64 })
+        lengths.addItem(juce::String(n) + " steps", true, n == length, [this, lane, n] {
+            owner_.setLaneLength(lane, n);
+            pattern_ = owner_.currentPattern();
+            repaint();
+        });
+    juce::PopupMenu euclid;
+    for (int k = 1; k <= juce::jmin(length, 16); ++k)
+        euclid.addItem(juce::String(k) + " of " + juce::String(length), [this, lane, k] {
+            owner_.euclidLane(lane, k);
+            pattern_ = owner_.currentPattern();
+            repaint();
+        });
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader(owner_.padName(lane));
+    menu.addSubMenu("Length", lengths);
+    menu.addSubMenu("Euclidean", euclid);
+    menu.addItem("Humanize this lane", [this, lane] {
+        owner_.humanizeBeat(0.7f, lane);
+        pattern_ = owner_.currentPattern();
+        repaint();
+    });
+    menu.addItem("Humanize the beat", [this] {
+        owner_.humanizeBeat(0.7f);
+        pattern_ = owner_.currentPattern();
+        repaint();
+    });
+    menu.addSeparator();
+    menu.addItem("Clear lane", [this, lane] {
+        owner_.pushUndo();
+        owner_.editPattern([lane](zd::Pattern& pat) {
+            auto& l = pat.lanes[static_cast<std::size_t>(lane)];
+            for (auto& st : l.steps)
+                st = zd::Step {};
+        });
+        pattern_ = owner_.currentPattern();
+        repaint();
+    });
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withMousePosition());
 }
 
 void StepGrid::mouseUp(const juce::MouseEvent&)

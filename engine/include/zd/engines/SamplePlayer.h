@@ -34,6 +34,12 @@ private:
     float velocity_ = 1.0f;
 };
 
+/// Cleans a loaded one-shot in place: trims silence (below -60 dBFS) from both ends, keeping
+/// 1 ms before the first sound and fading the last 2 ms so the cut never clicks, then
+/// normalizes the peak to `peakDb` (pass 0 or more to skip normalizing). Returns false if
+/// the sample is silent (it is left unchanged). Allocation-free except for the final shrink.
+bool prepareOneShot(SampleData& sample, float peakDb = -1.0f);
+
 /// Builds a synthesized closed hi-hat one-shot: six square oscillators at classic
 /// inharmonic ratios, high-passed, with a fast decay. Lets the plugin ship a sample part
 /// with no external files. Not realtime safe (allocates); call at load time.

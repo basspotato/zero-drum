@@ -48,6 +48,8 @@ struct ExportOptions
     /// wrap into its start: the files loop seamlessly in a DAW or sampler.
     bool seamlessLoop = true;
     std::array<std::string, kMaxParts> partNames {};
+    /// Only mix.wav (no part files, MIDI or pattern): for dragging the loop out as audio.
+    bool mixOnly = false;
 };
 
 struct ExportResult

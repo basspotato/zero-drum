@@ -1,5 +1,6 @@
 #pragma once
 
+#include "MixPage.h"
 #include "PadGrid.h"
 #include "PluginProcessor.h"
 #include "StepGrid.h"
@@ -14,6 +15,8 @@
 class MidiDragChip final : public juce::Component, public juce::SettableTooltipClient
 {
 public:
+    /// lane -1 drags the whole beat as MIDI, kAudioLoop the rendered loop as a WAV.
+    static constexpr int kAudioLoop = -2;
     MidiDragChip(ZeroDrumProcessor& owner, int lane, juce::String label);
     void paint(juce::Graphics&) override;
     void mouseDrag(const juce::MouseEvent&) override;
@@ -79,6 +82,7 @@ private:
     void timerCallback() override;
     void chooseExportFolder();
     void showKitMenu();
+    bool keyPressed(const juce::KeyPress& key) override;
     void chooseKitFile(bool save);
 
     ZeroDrumProcessor& owner_;
@@ -87,12 +91,17 @@ private:
     juce::TextButton generate_ { "Generate" }, mutate_ { "Mutate" }, fill_ { "Fill" }, build_ { "Build" };
     juce::TextButton export_ { "Export..." };
     juce::TextButton kit_ { "Kit" };
+    juce::TextButton undo_ { "Undo" }, redo_ { "Redo" };
     std::unique_ptr<juce::FileChooser> chooser_;
-    juce::Label dragLabel_ { {}, "Drag MIDI:" };
+    juce::Label dragLabel_ { {}, "Drag out:" };
     std::vector<std::unique_ptr<MidiDragChip>> chips_;
     juce::Label summary_;
+    std::array<juce::TextButton, zd::kMaxChain> slots_;
+    juce::ComboBox chain_;
+    void refreshSlots();
     juce::TooltipWindow tooltips_ { this };
     juce::GenericAudioProcessorEditor generic_;
+    MixPage mix_;
     StepGrid steps_;
     LayoutComponent padsPage_;
     PadGrid pads_;

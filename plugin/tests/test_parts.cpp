@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include "PluginProcessor.h"
+#include "zd/PatternIO.h"
 
 #include <memory>
 
@@ -105,4 +106,65 @@ TEST_CASE("Parts: a pad part moves between pads; a kit file restores everything"
     CHECK(plain(*p, "kickTune") == doctest::Approx(70.0f).epsilon(0.01));
     CHECK(plain(*p, "p11SmpPitch") == doctest::Approx(5.0f).epsilon(0.01));
     CHECK_FALSE(p->loadKit(part)); // a part file is not a kit
+}
+
+TEST_CASE("Undo: pattern edits, Generate and lane tools step back and forward")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    auto p = std::make_unique<ZeroDrumProcessor>();
+    p->prepareToPlay(48000.0, 512);
+    const auto original = p->currentPattern();
+    CHECK_FALSE(p->canUndo());
+
+    p->pushUndo();
+    p->editPattern([](zd::Pattern& pat) { pat.lanes[1].steps[2].on = !pat.lanes[1].steps[2].on; });
+    p->euclidLane(3, 5);
+    p->setLaneLength(2, 12);
+    p->generateBeat();
+    const auto generated = p->currentPattern();
+    REQUIRE(p->undo()); // generate
+    REQUIRE(p->undo()); // length
+    CHECK(p->currentPattern().lanes[2].length != 12);
+    REQUIRE(p->undo()); // euclid
+    REQUIRE(p->undo()); // the click
+    CHECK(p->currentPattern().lanes[1].steps[2].on == original.lanes[1].steps[2].on);
+    CHECK(p->currentPattern().lanes[3].steps[0].on == original.lanes[3].steps[0].on);
+    CHECK_FALSE(p->undo());
+    for (int i = 0; i < 4; ++i)
+        REQUIRE(p->redo());
+    CHECK_FALSE(p->redo());
+    CHECK(p->currentPattern().lanes[0].steps[0].on == generated.lanes[0].steps[0].on);
+    CHECK(zd::serializePattern(p->currentPattern()) == zd::serializePattern(generated));
+}
+
+TEST_CASE("Slots: a new slot copies the current one, edits stay in their slot, and the state keeps all four")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    auto p = std::make_unique<ZeroDrumProcessor>();
+    p->prepareToPlay(48000.0, 512);
+    const auto a = zd::serializePattern(p->currentPattern());
+    p->selectSlot(1);
+    CHECK(p->editSlot() == 1);
+    CHECK(zd::serializePattern(p->currentPattern()) == a); // B starts as a copy of A
+    p->editPattern([](zd::Pattern& pat) { pat.lanes[1].length = 32; pat.lanes[1].steps[20].on = true; });
+    const auto b = zd::serializePattern(p->currentPattern());
+    CHECK(b != a);
+    p->selectSlot(0);
+    CHECK(zd::serializePattern(p->currentPattern()) == a);
+    p->setChainCount(2);
+    CHECK(p->chainCount() == 2);
+
+    juce::MemoryBlock state;
+    p->getStateInformation(state);
+    auto q = std::make_unique<ZeroDrumProcessor>();
+    q->prepareToPlay(48000.0, 512);
+    q->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    CHECK(q->chainCount() == 2);
+    CHECK(q->editSlot() == 0);
+    CHECK(zd::serializePattern(q->currentPattern()) == a);
+    q->selectSlot(1);
+    CHECK(zd::serializePattern(q->currentPattern()) == b);
+
+    // B is two bars long, so a chain plays A for one bar and B for two.
+    CHECK(zd::patternBars(q->currentPattern()) == 2);
 }
