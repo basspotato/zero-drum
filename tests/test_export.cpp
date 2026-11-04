@@ -17,6 +17,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <set>
 #include <vector>
 
 using namespace zd;
@@ -282,4 +283,18 @@ TEST_CASE("Export: MIDI files are valid and match the hits the sequencer plays")
         CHECK(n.tick < static_cast<int>(loopBeats * exporting::kMidiPpq));
     }
     fs::remove_all(dir);
+}
+
+TEST_CASE("Export: every drum part gets its own MIDI note in 36..51")
+{
+    std::set<int> seen;
+    for (int part = 0; part < kMaxParts; ++part)
+    {
+        if (part == 4)
+            continue; // the 808 is pitched, on its own MIDI channel
+        const int note = exporting::defaultMidiNote(part);
+        CHECK(note >= 36);
+        CHECK(note <= 51);
+        CHECK(seen.insert(note).second);
+    }
 }

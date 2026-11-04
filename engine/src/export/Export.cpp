@@ -148,7 +148,8 @@ int defaultMidiNote(int part) noexcept
     // GM kick, snare and closed hat; then the notes Zero Drum itself maps to parts
     // (36 + part), so a dragged clip plays back the same on the plugin. Part 4 is the
     // 808 (pitched, on MIDI channel 2): 33 is its default root, used for steps without a note.
-    constexpr std::array<int, 5> notes { 36, 38, 42, 39, 33 };
+    // Part 6's own note (42) is the GM hat, so it takes 37, which the snare left free.
+    constexpr std::array<int, 7> notes { 36, 38, 42, 39, 33, 41, 37 };
     return part >= 0 && part < static_cast<int>(notes.size()) ? notes.at(static_cast<std::size_t>(part)) : 36 + part;
 }
 

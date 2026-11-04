@@ -87,7 +87,8 @@ public:
     double playheadBeats() const noexcept { return playheadBeats_.load(std::memory_order_relaxed); }
     bool isTransportRunning() const noexcept { return transportRunning_.load(std::memory_order_relaxed); }
 
-    /// Maps a MIDI note to a part: GM kick/snare/closed hat on 36/38/42, else 36..51 -> parts 0..15.
+    /// Maps a MIDI note to a part: GM kick/snare/closed hat on 36/38/42, part 6 on 37, else 36..51 -> parts 0..15.
+    /// Matches zd::exporting::defaultMidiNote, so dragged clips play back on the right pads.
     static int noteToPart(int note) noexcept;
 
     static constexpr int kSubMidiChannel = 2;

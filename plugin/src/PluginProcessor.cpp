@@ -359,6 +359,7 @@ int ZeroDrumProcessor::noteToPart(int note) noexcept
         case 36: return 0; // kick
         case 38: return 1; // snare
         case 42: return 2; // closed hat
+        case 37: return 6; // part 6's own note (42) is the hat, so it moves here
         default: break;
     }
     if (note >= 36 && note < 36 + zd::kMaxParts)
