@@ -158,7 +158,7 @@ namespace {
 /// Notes for steps [firstStep, endStep) of one pass of `p`, whose step 0 sits `passBeat`
 /// beats after the window start.
 void realizePass(const Sequencer& seq, const Pattern& p, int lane, long long firstStep, long long endStep,
-                 double passBeat, int defaultNote, std::vector<MidiNote>& notes)
+                 double passBeat, int defaultNote, std::vector<MidiNote>& notes, std::int64_t pass = 0)
 {
     const Lane& l = p.lanes[static_cast<std::size_t>(lane)];
     if (l.length <= 0)
@@ -166,7 +166,7 @@ void realizePass(const Sequencer& seq, const Pattern& p, int lane, long long fir
     for (long long k = firstStep; k < endStep; ++k)
     {
         const Step& s = l.steps[static_cast<std::size_t>(k % l.length)];
-        if (!s.on || !seq.passesProbability(lane, k, s.probability))
+        if (!s.on || !seq.passesProbability(lane, k, s.probability, pass))
             continue;
         const int repeats = std::clamp(s.ratchet, 1, kMaxRatchet);
         const double spacing = p.stepBeats / repeats;
@@ -205,7 +205,7 @@ std::vector<MidiNote> realizeLane(const Sequencer& seq, int lane, long long firs
         const double len = 4.0 * patternBars(p);
         const auto from = static_cast<long long>(std::ceil(std::max(0.0, firstBeat - pass) / p.stepBeats - 1.0e-9));
         const auto to = static_cast<long long>(std::ceil((std::min(len, endBeat - pass)) / p.stepBeats - 1.0e-9));
-        realizePass(seq, p, lane, from, to, pass - firstBeat, defaultNote, notes);
+        realizePass(seq, p, lane, from, to, pass - firstBeat, defaultNote, notes, seq.passIndexAt(pass + 1.0e-9));
         pass += len;
     }
     std::sort(notes.begin(), notes.end(), [](const MidiNote& a, const MidiNote& b) { return a.tick < b.tick; });

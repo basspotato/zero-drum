@@ -81,6 +81,8 @@ public:
     /// Note repeat: plays `part` on every 16th (synced to the host, or free-running when
     /// stopped) until called with part -1.
     void setNoteRepeat(int part, float velocity) noexcept;
+    /// Full level: pads and MIDI notes in play at full velocity (the sequencer keeps its own).
+    bool fullLevelPads() const noexcept { return value("padFullLevel") > 0.5f; }
     /// Note repeat spacing in beats for the repeatRate choice: 1/4, 1/8, 1/16, 1/32, 1/8T, 1/16T, 1/32T.
     static double noteRepeatBeats(int rate) noexcept;
     std::uint32_t partHits(int part) const noexcept { return engine_.hitCount(part); }
@@ -122,6 +124,19 @@ public:
     /// Auto fill: a fill on the last slot of the chain, or every 4th pass of a lone slot.
     void setAutoFill(bool on);
     bool autoFill() const;
+    /// A slot's length in bars, as the chain plays it.
+    int slotBars(int slot) const;
+    /// Regenerates one lane (kick, snare, hat, perc or 808) in the current style; the rest stays.
+    void generateLane(int lane);
+    /// Lane tools: play the lane twice (its length doubles), or play it backwards.
+    void doubleLane(int lane);
+    void reverseLane(int lane);
+
+    /// Part names: a custom name, else the sample's file name, else the default.
+    /// Empty resets. Saved with the session and in part files.
+    void setPartName(int part, const juce::String& name);
+    /// Tap tempo: call on each tap; after two taps sets the free-run tempo. Returns the BPM (0 until then).
+    double tapTempo(double nowSeconds);
 
     /// Lane mute and solo (not automatable; saved with the session). Muted parts drop out of
     /// the mix, the exports and MIDI out; any solo mutes every part that is not soloed.
@@ -149,8 +164,9 @@ public:
 
     // ---- Pad samples: parts 6..16 (indices 5..15) play user samples (message thread) ----
     static constexpr int kFirstSamplePad = kNumStripParts;
-    static constexpr int kNumPadSuffixes = 7;
-    static constexpr const char* kPadSuffixes[kNumPadSuffixes] { "SmpPitch", "SmpDecay", "SmpStart", "Level", "Pan", "RevSend", "SmpReverse" };
+    static constexpr int kNumPadSuffixes = 8;
+    static constexpr const char* kPadSuffixes[kNumPadSuffixes] { "SmpPitch", "SmpDecay", "SmpStart", "Level", "Pan", "RevSend", "SmpReverse", "Choke" };
+    static constexpr int kChokeGroups = 4; ///< pads in the same group cut each other off (open/closed hat style)
     static constexpr double kMaxSampleSeconds = 30.0;
     static bool isSamplePad(int part) noexcept { return part >= kFirstSamplePad && part < zd::kMaxParts; }
     /// Decodes an audio file (WAV, AIFF, FLAC, Ogg, MP3 where supported) to mono and hands it to
@@ -217,6 +233,9 @@ private:
     int chainCount_ = 1;                              ///< guarded by patternMutex_
     std::uint32_t slotUsed_ = 1u;                     ///< guarded by patternMutex_
     bool autoFill_ = false;                           ///< guarded by patternMutex_
+    std::array<juce::String, zd::kMaxParts> customNames_; ///< message thread
+    std::array<double, 4> taps_ {};                       ///< message thread
+    int numTaps_ = 0;
     std::unique_ptr<zd::Pattern> slotCopy_;           ///< guarded by patternMutex_
     std::atomic<std::uint32_t> muteMask_ { 0 }, soloMask_ { 0 };
     std::vector<zd::Pattern> undo_, redo_; ///< guarded by patternMutex_

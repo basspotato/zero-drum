@@ -79,13 +79,25 @@ double Sequencer::stepTimeIn(const Pattern& pattern, int lane, std::int64_t k) n
     return base + swingShift + static_cast<double>(s.microOffset) * pattern.stepBeats;
 }
 
-bool Sequencer::passesProbability(int lane, std::int64_t k, float probability) const noexcept
+std::int64_t Sequencer::passIndexAt(double ppq) const noexcept
+{
+    if (chainCount_ <= 1)
+        return 0;
+    int slot = 0;
+    double start = 0.0, end = 0.0;
+    locate(ppq, slot, start, end);
+    return static_cast<std::int64_t>(std::floor(ppq / chainBeats_)) * chainCount_ + slot;
+}
+
+bool Sequencer::passesProbability(int lane, std::int64_t k, float probability, std::int64_t pass) const noexcept
 {
     if (probability >= 1.0f)
         return true;
     if (probability <= 0.0f)
         return false;
-    const std::uint64_t key = dsp::hash64(seed_) ^ dsp::hash64((static_cast<std::uint64_t>(lane) << 48) ^ static_cast<std::uint64_t>(k));
+    std::uint64_t key = dsp::hash64(seed_) ^ dsp::hash64((static_cast<std::uint64_t>(lane) << 48) ^ static_cast<std::uint64_t>(k));
+    if (pass != 0)
+        key ^= dsp::hash64(static_cast<std::uint64_t>(pass) * 0x9E3779B97F4A7C15ull);
     return dsp::hashToUnit(key) < static_cast<double>(probability);
 }
 
@@ -95,7 +107,7 @@ int Sequencer::collect(const Transport& t, double sampleRate, int numSamples,
     if (!t.playing || t.bpm <= 0.0 || numSamples <= 0)
         return 0;
     if (chainCount_ <= 1)
-        return collectPattern(slots_[0], t, sampleRate, numSamples, out, capacity);
+        return collectPattern(slots_[0], t, sampleRate, numSamples, out, capacity, 0);
 
     // A chain: cut the block where one slot hands over to the next. Each slot runs on its own
     // clock that starts at zero when its pass begins, so every pass plays from its first step.
@@ -116,8 +128,9 @@ int Sequencer::collect(const Transport& t, double sampleRate, int numSamples,
             segEnd = at + 1; // guard against rounding at the seam
         Transport local = t;
         local.ppqPosition = static_cast<double>(at - slotStartSample) / samplesPerBeat;
+        const auto pass = static_cast<std::int64_t>(std::floor(static_cast<double>(at) / samplesPerBeat / chainBeats_)) * chainCount_ + slot;
         const int n = collectPattern(slots_[static_cast<std::size_t>(slot)], local, sampleRate, static_cast<int>(segEnd - at),
-                                     out + count, capacity - count);
+                                     out + count, capacity - count, pass);
         for (int i = 0; i < n; ++i)
             out[count + i].offset += static_cast<int>(at - blockStart);
         count += n;
@@ -127,7 +140,7 @@ int Sequencer::collect(const Transport& t, double sampleRate, int numSamples,
 }
 
 int Sequencer::collectPattern(const Pattern& pattern, const Transport& t, double sampleRate, int numSamples,
-                              NoteEvent* out, int capacity) const noexcept
+                              NoteEvent* out, int capacity, std::int64_t pass) const noexcept
 {
 
     const double samplesPerBeat = sampleRate * 60.0 / t.bpm;
@@ -155,7 +168,7 @@ int Sequencer::collectPattern(const Pattern& pattern, const Transport& t, double
             const double time = stepTimeIn(pattern, lane, k);
             if (time < 0.0)
                 continue;
-            if (!passesProbability(lane, k, s.probability))
+            if (!passesProbability(lane, k, s.probability, pass))
                 continue;
 
             // Ratchets repeat the hit evenly inside the step (trap and drill hat rolls).

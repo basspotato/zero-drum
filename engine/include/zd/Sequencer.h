@@ -100,11 +100,14 @@ public:
     static double stepTimeIn(const Pattern& pattern, int lane, std::int64_t k) noexcept;
 
     /// Whether absolute step `k` of `lane` passes its probability draw (seeded, block-size free).
-    bool passesProbability(int lane, std::int64_t k, float probability) const noexcept;
+    /// `pass` tells the passes of a chain apart, so each one draws afresh (0 without a chain).
+    bool passesProbability(int lane, std::int64_t k, float probability, std::int64_t pass = 0) const noexcept;
+    /// Which pass of the chain plays at `ppq`: counts every slot pass from the song start (0 without a chain).
+    std::int64_t passIndexAt(double ppq) const noexcept;
 
 private:
     int collectPattern(const Pattern& pattern, const Transport& transport, double sampleRate, int numSamples,
-                       NoteEvent* out, int capacity) const noexcept;
+                       NoteEvent* out, int capacity, std::int64_t pass) const noexcept;
     /// Where `ppq` falls in the chain: the slot, and the beat that slot's current pass began on.
     void locate(double ppq, int& slot, double& slotStart, double& slotEnd) const noexcept;
 

@@ -91,6 +91,8 @@ private:
     juce::ToggleButton crush_ { "Crush" };
     juce::ToggleButton reverse_ { "Reverse" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> reverseAttachment_;
+    juce::ComboBox choke_;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> chokeAttachment_;
     juce::TextButton load_ { "Load sample..." }, clear_ { "Clear" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> crushAttachment_;
 };
@@ -131,6 +133,9 @@ private:
     juce::ComboBox repeatRate_;
     juce::Label repeatLabel_ { {}, "Repeat" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> repeatAttachment_;
+    juce::ToggleButton fullLevel_ { "Full level" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> fullLevelAttachment_;
+    juce::TextButton tap_ { "Tap" };
     juce::TooltipWindow tooltips_ { this };
     juce::GenericAudioProcessorEditor generic_;
     MixPage mix_;

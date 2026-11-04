@@ -39,11 +39,20 @@ private:
     juce::Rectangle<float> muteBox(int row) const;
     juce::Rectangle<float> soloBox(int row) const;
     void shiftLane(int lane, int by);
+    /// Long lanes page: over kPageSteps columns the grid shows one page at a time, with tabs on top.
+    static constexpr int kPageSteps = 32;
+    int pages() const noexcept { return (columns() + kPageSteps - 1) / kPageSteps; }
+    int firstColumn() const noexcept { return pages() > 1 ? page_ * kPageSteps : 0; }
+    int visibleColumns() const noexcept { return pages() > 1 ? juce::jmin(kPageSteps, columns() - firstColumn()) : columns(); }
+    juce::Rectangle<float> gridArea() const;
+    juce::Rectangle<float> pageTab(int index) const; ///< index pages() is the Follow tab
 
     ZeroDrumProcessor& owner_;
     zd::Pattern pattern_;
     std::vector<int> rows_; ///< the part shown on each row
     int playStep_ = -1;
+    int page_ = 0;
+    bool follow_ = true; ///< the page follows the playhead while the transport runs
     // Gesture state.
     int downLane_ = -1, downStep_ = -1;
     bool downWasOn_ = false, moved_ = false;

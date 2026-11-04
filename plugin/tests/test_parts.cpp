@@ -223,3 +223,72 @@ TEST_CASE("Pads: reverse is a per-pad parameter that travels with a part file")
     CHECK(ZeroDrumProcessor::partOfParam("p9SmpReverse") == 9);
     CHECK(plain(*p, "p9SmpReverse") > 0.5f);
 }
+
+TEST_CASE("Lane tools: generate one lane, double, reverse; all undoable")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    auto p = std::make_unique<ZeroDrumProcessor>();
+    p->prepareToPlay(48000.0, 512);
+    const auto before = p->currentPattern();
+
+    p->generateLane(2);
+    const auto after = p->currentPattern();
+    for (int lane : { 0, 1, 3, 4 })
+        for (int s = 0; s < zd::kMaxStepsPerLane; ++s)
+            REQUIRE(after.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(s)].on
+                    == before.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(s)].on);
+    REQUIRE(p->undo());
+    CHECK(zd::serializePattern(p->currentPattern()) == zd::serializePattern(before));
+
+    const int n = before.lanes[1].length;
+    p->doubleLane(1);
+    auto doubled = p->currentPattern().lanes[1];
+    CHECK(doubled.length == 2 * n);
+    for (int s = 0; s < n; ++s)
+        CHECK(doubled.steps[static_cast<std::size_t>(s + n)].on == doubled.steps[static_cast<std::size_t>(s)].on);
+    REQUIRE(p->undo());
+
+    p->reverseLane(0);
+    const auto rev = p->currentPattern().lanes[0];
+    const int k = before.lanes[0].length;
+    for (int s = 0; s < k; ++s)
+        CHECK(rev.steps[static_cast<std::size_t>(s)].on == before.lanes[0].steps[static_cast<std::size_t>(k - 1 - s)].on);
+    REQUIRE(p->undo());
+    CHECK(zd::serializePattern(p->currentPattern()) == zd::serializePattern(before));
+}
+
+TEST_CASE("Names, tap tempo, choke groups and full level")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    auto p = std::make_unique<ZeroDrumProcessor>();
+    p->prepareToPlay(48000.0, 512);
+
+    // Names: custom, saved with the session, empty resets.
+    p->setPartName(1, "Big Clap");
+    p->setPartName(9, "Shaker");
+    CHECK(p->padName(1) == "Big Clap");
+    juce::MemoryBlock state;
+    p->getStateInformation(state);
+    auto q = std::make_unique<ZeroDrumProcessor>();
+    q->prepareToPlay(48000.0, 512);
+    q->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    CHECK(q->padName(1) == "Big Clap");
+    CHECK(q->padName(9) == "Shaker");
+    q->setPartName(1, "  ");
+    CHECK(q->padName(1) == "Snare");
+
+    // Tap tempo: taps half a second apart are 120 BPM.
+    CHECK(p->tapTempo(10.0) == doctest::Approx(0.0));
+    CHECK(p->tapTempo(10.5) == doctest::Approx(120.0));
+    CHECK(p->tapTempo(11.0) == doctest::Approx(120.0));
+    CHECK(plain(*p, "freeRunBpm") == doctest::Approx(120.0f).epsilon(0.01));
+    CHECK(p->tapTempo(20.0) == doctest::Approx(0.0)); // a long gap starts over
+
+    // Choke groups and full level are plain parameters.
+    set(*p, "p6Choke", 2.0f);
+    CHECK(ZeroDrumProcessor::partOfParam("p6Choke") == 6);
+    CHECK(plain(*p, "p6Choke") == doctest::Approx(2.0f));
+    CHECK_FALSE(p->fullLevelPads());
+    set(*p, "padFullLevel", 1.0f);
+    CHECK(p->fullLevelPads());
+}

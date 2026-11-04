@@ -1,5 +1,6 @@
 #include "StepGrid.h"
 
+#include "PartName.h"
 #include "Theme.h"
 
 #include <algorithm>
@@ -47,22 +48,37 @@ int StepGrid::columns() const noexcept
     return std::min(n, zd::kMaxStepsPerLane);
 }
 
+juce::Rectangle<float> StepGrid::gridArea() const
+{
+    auto area = getLocalBounds().toFloat().reduced(6.0f);
+    if (pages() > 1)
+        area.removeFromTop(24.0f); // page tabs
+    return area;
+}
+
+juce::Rectangle<float> StepGrid::pageTab(int index) const
+{
+    const auto top = getLocalBounds().toFloat().reduced(6.0f);
+    return { static_cast<float>(kHeaderWidth) + 6.0f + index * 84.0f, top.getY(), 80.0f, 20.0f };
+}
+
 juce::Rectangle<float> StepGrid::cellBounds(int lane, int step) const
 {
-    const auto area = getLocalBounds().toFloat().reduced(6.0f).withTrimmedLeft(static_cast<float>(kHeaderWidth));
-    const float w = area.getWidth() / static_cast<float>(columns());
+    const auto area = gridArea().withTrimmedLeft(static_cast<float>(kHeaderWidth));
+    const float w = area.getWidth() / static_cast<float>(visibleColumns());
     const float h = area.getHeight() / static_cast<float>(std::max(1, rows()));
-    return { area.getX() + step * w, area.getY() + lane * h, w, h };
+    return { area.getX() + (step - firstColumn()) * w, area.getY() + lane * h, w, h };
 }
 
 bool StepGrid::cellAt(juce::Point<float> p, int& lane, int& step) const
 {
-    const auto area = getLocalBounds().toFloat().reduced(6.0f).withTrimmedLeft(static_cast<float>(kHeaderWidth));
-    if (!area.contains(p))
+    const auto area = gridArea().withTrimmedLeft(static_cast<float>(kHeaderWidth));
+    if (!area.contains(p) || rows() == 0)
         return false;
     const int row = juce::jlimit(0, rows() - 1, static_cast<int>((p.y - area.getY()) / (area.getHeight() / static_cast<float>(rows()))));
     lane = rows_[static_cast<std::size_t>(row)];
-    step = juce::jlimit(0, columns() - 1, static_cast<int>((p.x - area.getX()) / (area.getWidth() / columns())));
+    step = firstColumn()
+           + juce::jlimit(0, visibleColumns() - 1, static_cast<int>((p.x - area.getX()) / (area.getWidth() / visibleColumns())));
     return step < pattern_.lanes[static_cast<std::size_t>(lane)].length;
 }
 
@@ -96,7 +112,23 @@ void StepGrid::shiftLane(int lane, int by)
 void StepGrid::paint(juce::Graphics& g)
 {
     g.fillAll(zdui::kBackground);
-    const int cols = columns();
+    if (pages() > 1)
+    {
+        // Page tabs, then Follow (the page tracks the playhead while playing).
+        g.setFont(juce::FontOptions(12.0f));
+        for (int i = 0; i <= pages(); ++i)
+        {
+            const bool follow = i == pages();
+            const bool on = follow ? follow_ : i == page_;
+            const auto tab = pageTab(i);
+            g.setColour(on ? zdui::kAccent : zdui::kCellOff);
+            g.fillRoundedRectangle(tab, 4.0f);
+            g.setColour(on ? juce::Colours::black : zdui::kText);
+            const juce::String text = follow ? juce::String("Follow")
+                                             : juce::String(i * kPageSteps + 1) + "-" + juce::String(juce::jmin(columns(), (i + 1) * kPageSteps));
+            g.drawText(text, tab, juce::Justification::centred);
+        }
+    }
     for (int l = 0; l < rows(); ++l)
     {
         const int part = rows_[static_cast<std::size_t>(l)];
@@ -119,7 +151,7 @@ void StepGrid::paint(juce::Graphics& g)
         box(muteBox(l), "M", owner_.laneMuted(part), juce::Colour(0xffe0b040));
         box(soloBox(l), "S", owner_.laneSoloed(part), juce::Colour(0xff40c0e0));
 
-        for (int s = 0; s < cols; ++s)
+        for (int s = firstColumn(); s < firstColumn() + visibleColumns(); ++s)
         {
             const auto r = cellBounds(l, s).reduced(s % 4 == 3 ? 1.0f : 1.5f, 3.0f).withTrimmedRight(s % 4 == 3 ? 2.0f : 0.0f);
             if (s >= lane.length)
@@ -170,7 +202,7 @@ void StepGrid::paint(juce::Graphics& g)
     }
     // Bar lines every 16 steps.
     g.setColour(zdui::kDim.withAlpha(0.5f));
-    for (int s = 16; s < cols; s += 16)
+    for (int s = firstColumn() + 16; s < firstColumn() + visibleColumns(); s += 16)
     {
         const auto r = cellBounds(0, s);
         g.drawLine(r.getX(), r.getY(), r.getX(), cellBounds(rows() - 1, s).getBottom(), 1.0f);
@@ -210,13 +242,35 @@ void StepGrid::timerCallback()
         playStep_ = step;
         changed = true;
     }
+    int page = juce::jlimit(0, juce::jmax(0, pages() - 1), page_);
+    if (follow_ && step >= 0 && pages() > 1 && downLane_ < 0)
+        page = (step % columns()) / kPageSteps;
+    if (page != page_)
+    {
+        page_ = page;
+        changed = true;
+    }
     if (changed)
         repaint();
 }
 
 void StepGrid::mouseDown(const juce::MouseEvent& e)
 {
-    if (e.position.x < static_cast<float>(kHeaderWidth) + 6.0f)
+    if (pages() > 1)
+        for (int i = 0; i <= pages(); ++i)
+            if (pageTab(i).contains(e.position))
+            {
+                if (i == pages())
+                    follow_ = !follow_;
+                else
+                {
+                    page_ = i;
+                    follow_ = false;
+                }
+                repaint();
+                return;
+            }
+    if (e.position.x < static_cast<float>(kHeaderWidth) + 6.0f && gridArea().contains(e.position))
     {
         for (int r = 0; r < rows(); ++r)
         {
@@ -304,7 +358,7 @@ void StepGrid::mouseDrag(const juce::MouseEvent& e)
 
 void StepGrid::showLaneMenu(juce::Point<float> p)
 {
-    const auto area = getLocalBounds().toFloat().reduced(6.0f);
+    const auto area = gridArea();
     if (rows() == 0 || !area.contains(p))
         return;
     const int row = juce::jlimit(0, rows() - 1, static_cast<int>((p.y - area.getY()) / (area.getHeight() / static_cast<float>(rows()))));
@@ -330,6 +384,22 @@ void StepGrid::showLaneMenu(juce::Point<float> p)
     menu.addSectionHeader(owner_.padName(lane));
     menu.addSubMenu("Length", lengths);
     menu.addSubMenu("Euclidean", euclid);
+    if (lane < ZeroDrumProcessor::kNumStripParts)
+        menu.addItem("Generate this lane", [this, lane] {
+            owner_.generateLane(lane);
+            pattern_ = owner_.currentPattern();
+            repaint();
+        });
+    menu.addItem("Double", length > 0 && 2 * length <= zd::kMaxStepsPerLane, false, [this, lane] {
+        owner_.doubleLane(lane);
+        pattern_ = owner_.currentPattern();
+        repaint();
+    });
+    menu.addItem("Reverse", [this, lane] {
+        owner_.reverseLane(lane);
+        pattern_ = owner_.currentPattern();
+        repaint();
+    });
     menu.addItem("Shift right (later)", [this, lane] { shiftLane(lane, 1); });
     menu.addItem("Shift left (earlier)", [this, lane] { shiftLane(lane, -1); });
     menu.addItem("Humanize this lane", [this, lane] {
@@ -343,6 +413,7 @@ void StepGrid::showLaneMenu(juce::Point<float> p)
         repaint();
     });
     menu.addSeparator();
+    menu.addItem("Rename...", [this, lane] { zdui::askPartName(owner_, lane, [this] { repaint(); }); });
     menu.addItem("Clear lane", [this, lane] {
         owner_.pushUndo();
         owner_.editPattern([lane](zd::Pattern& pat) {

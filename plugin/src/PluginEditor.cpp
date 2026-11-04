@@ -59,6 +59,12 @@ PartPanel::PartPanel(ZeroDrumProcessor& owner) : owner_(owner)
     addAndMakeVisible(crush_);
     addChildComponent(reverse_);
     reverse_.setTooltip("Play the sample backwards");
+    choke_.addItem("No choke", 1);
+    for (int g = 1; g <= ZeroDrumProcessor::kChokeGroups; ++g)
+        choke_.addItem("Choke group " + juce::String(g), g + 1);
+    choke_.setTooltip("Pads in the same group cut each other off, like an open and a closed hat");
+    choke_.setWantsKeyboardFocus(false);
+    addChildComponent(choke_);
     addChildComponent(load_);
     addChildComponent(clear_);
     load_.onClick = [this] { if (onLoad) onLoad(part_); };
@@ -102,6 +108,10 @@ void PartPanel::showPart(int part)
     if (samplePad && loaded)
         reverseAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner_.state(), id + "SmpReverse", reverse_);
     reverse_.setVisible(samplePad && loaded);
+    chokeAttachment_.reset();
+    if (samplePad && loaded)
+        chokeAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(owner_.state(), id + "Choke", choke_);
+    choke_.setVisible(samplePad && loaded);
     load_.setVisible(samplePad);
     load_.setButtonText(loaded ? "Replace..." : "Load sample...");
     clear_.setVisible(samplePad && loaded);
@@ -137,7 +147,8 @@ void PartPanel::resized()
         knobs_[i].slider.setBounds(r.reduced(4));
     }
     crush_.setBounds(area.getX() + 8, area.getY() + 3 * (cell + 8) + 4, cell * 2 - 16, 24);
-    reverse_.setBounds(crush_.getBounds());
+    reverse_.setBounds(crush_.getBounds().withWidth(90));
+    choke_.setBounds(crush_.getRight() - (cell + 8), crush_.getY(), cell + 8, 24);
     const bool loaded = owner_.padHasSample(part_);
     const int buttonsY = loaded ? area.getY() + 3 * (cell + 8) + 34 : area.getY() + 96;
     load_.setBounds(area.getX() + 8, buttonsY, cell + 20, 26);
@@ -239,6 +250,15 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     repeatLabel_.setColour(juce::Label::textColourId, zdui::kDim);
     repeatLabel_.setFont(juce::FontOptions(12.0f));
     repeatLabel_.setJustificationType(juce::Justification::centredRight);
+    fullLevelAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner_.state(), "padFullLevel", fullLevel_);
+    fullLevel_.setTooltip("Pads and MIDI notes play at full velocity");
+    fullLevel_.setWantsKeyboardFocus(false);
+    tap_.setTooltip("Tap the tempo (used in the standalone and with Free Run on)");
+    tap_.setWantsKeyboardFocus(false);
+    tap_.onClick = [this] {
+        const double bpm = owner_.tapTempo(juce::Time::getMillisecondCounterHiRes() * 0.001);
+        tap_.setButtonText(bpm > 0.0 ? juce::String(bpm, 1) : juce::String("Tap"));
+    };
     padHint_.setColour(juce::Label::textColourId, zdui::kDim);
     padHint_.setFont(juce::FontOptions(12.0f));
     padsPage_.onResize = [this] {
@@ -247,6 +267,10 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
         auto bottom = page.removeFromBottom(24);
         repeatRate_.setBounds(bottom.removeFromRight(76).reduced(0, 1));
         repeatLabel_.setBounds(bottom.removeFromRight(56));
+        bottom.removeFromRight(6);
+        tap_.setBounds(bottom.removeFromRight(56).reduced(0, 1));
+        bottom.removeFromRight(6);
+        fullLevel_.setBounds(bottom.removeFromRight(92));
         padHint_.setBounds(bottom);
         auto panel = page.removeFromRight(juce::jmax(200, page.getWidth() / 3));
         partPanel_.setBounds(panel.reduced(4, 0));
@@ -258,6 +282,8 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     padsPage_.addAndMakeVisible(padHint_);
     padsPage_.addAndMakeVisible(repeatRate_);
     padsPage_.addAndMakeVisible(repeatLabel_);
+    padsPage_.addAndMakeVisible(fullLevel_);
+    padsPage_.addAndMakeVisible(tap_);
 
     tabs_.setTabBarDepth(30);
     tabs_.addTab("Beat", zdui::kBackground, &steps_, false);
@@ -293,7 +319,9 @@ void ZeroDrumEditor::refreshSlots()
         const bool inChain = count > 1 && i < count;
         b.setColour(juce::TextButton::textColourOffId, inChain ? juce::Colours::white : zdui::kDim);
         const juce::String name = juce::String::charToString(static_cast<juce::juce_wchar>('A' + i));
-        b.setButtonText(i == playing && count > 1 ? juce::String::fromUTF8("\xe2\x96\xb8") + name : name);
+        const int bars = owner_.slotBars(i);
+        const juce::String label = bars > 1 ? name + juce::String::fromUTF8("\xc2\xb7") + juce::String(bars) : name;
+        b.setButtonText(i == playing && count > 1 ? juce::String::fromUTF8("\xe2\x96\xb8") + label : label);
     }
     if (chain_.getSelectedId() != count)
         chain_.setSelectedId(count, juce::dontSendNotification);
@@ -487,7 +515,7 @@ void ZeroDrumEditor::resized()
     row.removeFromRight(4);
     for (int i = zd::kMaxChain - 1; i >= 0; --i)
     {
-        slots_[static_cast<std::size_t>(i)].setBounds(row.removeFromRight(30));
+        slots_[static_cast<std::size_t>(i)].setBounds(row.removeFromRight(38));
         row.removeFromRight(2);
     }
     summary_.setBounds(row.reduced(4, 0));

@@ -5,6 +5,7 @@
 #include "zd/PatternIO.h"
 #include "zd/dsp/Random.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <thread>
@@ -186,6 +187,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
         add("Pan", "Pan", Range { -1.0f, 1.0f }, 0.0f, "");
         add("RevSend", "Reverb", Range { 0.0f, 1.0f }, 0.0f, "");
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { id + "SmpReverse", 1 }, name + "Reverse", false));
+        layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { id + "Choke", 1 }, name + "Choke Group",
+                                                                juce::StringArray { "Off", "1", "2", "3", "4" }, 0));
     }
 
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "midiOut", 1 }, "MIDI Out", true));
@@ -205,6 +208,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     layout.add(floatParam("freeRunBpm", "Free Run Tempo", Range { 60.0f, 200.0f, 0.1f }, 120.0f, "BPM"));
     layout.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID { "repeatRate", 1 }, "Note Repeat Rate",
                                                             juce::StringArray { "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16T", "1/32T" }, 2));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "padFullLevel", 1 }, "Pads Full Level", false));
 
     return layout;
 }
@@ -302,6 +306,20 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
         part.mix.pan = pp[4]->load(std::memory_order_relaxed);
         part.mix.reverbSend = pp[5]->load(std::memory_order_relaxed);
         part.sampleParams.reverse = pp[6]->load(std::memory_order_relaxed) > 0.5f;
+    }
+    // Choke groups: a pad cuts off every other pad in its group.
+    std::array<int, zd::kMaxParts> group {};
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+        group[static_cast<std::size_t>(i)] = static_cast<int>(padParams_[static_cast<std::size_t>(i)][7]->load(std::memory_order_relaxed));
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+    {
+        std::uint32_t mask = 0;
+        const int gi = group[static_cast<std::size_t>(i)];
+        if (gi > 0)
+            for (int j = kFirstSamplePad; j < zd::kMaxParts; ++j)
+                if (j != i && group[static_cast<std::size_t>(j)] == gi)
+                    mask |= 1u << j;
+        engine.part(i).chokes = mask;
     }
     zd::dsp::ReverbSettings rv;
     rv.decay = value("revDecay");
@@ -411,7 +429,7 @@ void ZeroDrumProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Mid
         }
         const int part = noteToPart(msg.getNoteNumber());
         if (part >= 0)
-            midiEvents_[static_cast<std::size_t>(numEvents++)] = { meta.samplePosition, part, msg.getFloatVelocity(), -1 };
+            midiEvents_[static_cast<std::size_t>(numEvents++)] = { meta.samplePosition, part, fullLevelPads() ? 1.0f : msg.getFloatVelocity(), -1 };
     }
 
     zd::Transport transport;
@@ -812,6 +830,87 @@ bool ZeroDrumProcessor::autoFill() const
     return autoFill_;
 }
 
+int ZeroDrumProcessor::slotBars(int slot) const
+{
+    slot = juce::jlimit(0, zd::kMaxChain - 1, slot);
+    const std::lock_guard<std::mutex> lock(patternMutex_);
+    return zd::patternBars(slot == editSlot_ ? uiPattern_ : slots_[static_cast<std::size_t>(slot)]);
+}
+
+void ZeroDrumProcessor::generateLane(int lane)
+{
+    if (lane < 0 || lane >= kNumStripParts)
+        return;
+    pushUndo();
+    zd::gen::GenerateParams p;
+    p.style = static_cast<zd::gen::Style>(static_cast<int>(value("genStyle")));
+    p.density = value("genDensity");
+    p.complexity = value("genComplexity");
+    p.groove = value("genGroove");
+    p.rootNote = static_cast<int>(value("genRoot"));
+    p.lockMask = 0;
+    zd::Pattern fresh;
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        // A new seed for just this lane, derived from the beat's seed (no clock, no global RNG).
+        p.seed = zd::dsp::hash64(seed_ * 0x9E3779B97F4A7C15ull + 0x5EED + static_cast<std::uint64_t>(++humanizeCount_)) & 0x7fffffffffffull;
+        zd::gen::generate(p, fresh);
+        // The fresh lane keeps this beat's step size by taking its own; lengths may differ (polymeter).
+        uiPattern_.lanes[static_cast<std::size_t>(lane)] = fresh.lanes[static_cast<std::size_t>(lane)];
+        next = uiPattern_;
+    }
+    publishPattern(next);
+}
+
+void ZeroDrumProcessor::doubleLane(int lane)
+{
+    if (lane < 0 || lane >= zd::kMaxParts)
+        return;
+    pushUndo();
+    editPattern([lane](zd::Pattern& pat) {
+        auto& l = pat.lanes[static_cast<std::size_t>(lane)];
+        const int n = l.length;
+        if (n <= 0 || 2 * n > zd::kMaxStepsPerLane)
+            return;
+        std::copy(l.steps.begin(), l.steps.begin() + n, l.steps.begin() + n);
+        l.length = 2 * n;
+    });
+}
+
+void ZeroDrumProcessor::reverseLane(int lane)
+{
+    if (lane < 0 || lane >= zd::kMaxParts)
+        return;
+    pushUndo();
+    editPattern([lane](zd::Pattern& pat) {
+        auto& l = pat.lanes[static_cast<std::size_t>(lane)];
+        std::reverse(l.steps.begin(), l.steps.begin() + juce::jlimit(0, zd::kMaxStepsPerLane, l.length));
+    });
+}
+
+void ZeroDrumProcessor::setPartName(int part, const juce::String& name)
+{
+    if (part >= 0 && part < zd::kMaxParts)
+        customNames_[static_cast<std::size_t>(part)] = name.trim().substring(0, 32);
+}
+
+double ZeroDrumProcessor::tapTempo(double now)
+{
+    // A gap of over two seconds starts a new count.
+    if (numTaps_ > 0 && now - taps_[static_cast<std::size_t>((numTaps_ - 1) % 4)] > 2.0)
+        numTaps_ = 0;
+    taps_[static_cast<std::size_t>(numTaps_ % 4)] = now;
+    ++numTaps_;
+    if (numTaps_ < 2)
+        return 0.0;
+    const int n = juce::jmin(numTaps_, 4);
+    const double first = taps_[static_cast<std::size_t>((numTaps_ - n) % 4)];
+    const double bpm = juce::jlimit(60.0, 200.0, 60.0 * (n - 1) / juce::jmax(1.0e-3, now - first));
+    setParam("freeRunBpm", static_cast<float>(bpm));
+    return bpm;
+}
+
 void ZeroDrumProcessor::setLaneMute(int part, bool muted)
 {
     if (part < 0 || part >= zd::kMaxParts)
@@ -842,7 +941,7 @@ std::array<std::string, zd::kMaxParts> ZeroDrumProcessor::partNames() const
 {
     std::array<std::string, zd::kMaxParts> names {};
     for (int i = 0; i < kNumStripParts; ++i)
-        names[static_cast<std::size_t>(i)] = kStripNames[i];
+        names[static_cast<std::size_t>(i)] = padName(i).toStdString();
     for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
         if (padHasSample(i))
             names[static_cast<std::size_t>(i)] = padName(i).toStdString();
@@ -907,6 +1006,8 @@ juce::ValueTree ZeroDrumProcessor::partToTree(int part) const
     tree.setProperty("version", 1, nullptr);
     tree.setProperty("part", part, nullptr);
     tree.setProperty("name", padName(part), nullptr);
+    if (customNames_[static_cast<std::size_t>(part)].isNotEmpty())
+        tree.setProperty("customName", customNames_[static_cast<std::size_t>(part)], nullptr);
     for (const auto& idStd : paramIds_)
     {
         const juce::String id(idStd);
@@ -953,6 +1054,7 @@ bool ZeroDrumProcessor::partFromTree(int part, const juce::ValueTree& tree, bool
         if (!file.existsAsFile() || !loadPadSample(part, file))
             clearPadSample(part);
     }
+    customNames_[static_cast<std::size_t>(part)] = tree.getProperty("customName").toString();
     zd::Pattern lane;
     if (withLane)
         pushUndo();
@@ -997,6 +1099,8 @@ bool ZeroDrumProcessor::loadKit(const juce::File& file)
 
 juce::String ZeroDrumProcessor::padName(int part) const
 {
+    if (part >= 0 && part < zd::kMaxParts && customNames_[static_cast<std::size_t>(part)].isNotEmpty())
+        return customNames_[static_cast<std::size_t>(part)];
     if (part >= 0 && part < kNumStripParts)
         return kStripNames[part];
     if (padHasSample(part))
@@ -1044,6 +1148,7 @@ void ZeroDrumProcessor::clearPadSample(int part)
         return;
     padSamples_[static_cast<std::size_t>(part)].reset();
     padFiles_[static_cast<std::size_t>(part)] = juce::File {};
+    customNames_[static_cast<std::size_t>(part)] = {};
     engine_.submitSample(part, nullptr);
 }
 
@@ -1453,6 +1558,14 @@ void ZeroDrumProcessor::getStateInformation(juce::MemoryBlock& destData)
         else
             state.removeProperty(key, nullptr);
     }
+    for (int i = 0; i < zd::kMaxParts; ++i)
+    {
+        const juce::Identifier key("name" + juce::String(i));
+        if (customNames_[static_cast<std::size_t>(i)].isNotEmpty())
+            state.setProperty(key, customNames_[static_cast<std::size_t>(i)], nullptr);
+        else
+            state.removeProperty(key, nullptr);
+    }
     state.setProperty("muteMask", static_cast<juce::int64>(muteMask_.load()), nullptr);
     state.setProperty("soloMask", static_cast<juce::int64>(soloMask_.load()), nullptr);
     if (auto xml = state.createXml())
@@ -1489,6 +1602,8 @@ void ZeroDrumProcessor::setStateInformation(const void* data, int sizeInBytes)
         if (!file.existsAsFile() || !loadPadSample(i, file))
             clearPadSample(i);
     }
+    for (int i = 0; i < zd::kMaxParts; ++i)
+        customNames_[static_cast<std::size_t>(i)] = tree.getProperty("name" + juce::String(i)).toString();
 
     if (hasPattern)
     {

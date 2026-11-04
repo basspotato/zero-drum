@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "zd/Sequencer.h"
+#include "zd/export/Export.h"
 
 #include <algorithm>
 #include <array>
@@ -167,4 +168,53 @@ TEST_CASE("Chain: slots play one after another, each from its first step, at any
     for (int block : { 1, 100, 512, 4096, 9999 })
         CHECK(run(block) == ref);
     CHECK(&Sequencer {}.patternAt(1.0) != nullptr);
+}
+
+TEST_CASE("Chain: probability draws afresh on every pass, the same at any block size")
+{
+    Chain chain;
+    chain.count = 2;
+    for (auto& slot : { 0, 1 })
+    {
+        Pattern& p = chain.slots[static_cast<std::size_t>(slot)];
+        p = Pattern {};
+        for (int s = 0; s < 16; ++s)
+            p.lanes[2].steps[static_cast<std::size_t>(s)] = Step { true, 1.0f, 0.5f, 0.0f, -1, 1 };
+    }
+    auto run = [&](int block) {
+        Sequencer seq;
+        seq.setChain(chain);
+        std::vector<long long> hits;
+        std::array<NoteEvent, 256> ev {};
+        const double sr = 48000.0;
+        const long long total = 4LL * 96000; // four 1-bar passes at 120 BPM
+        for (long long pos = 0; pos < total; pos += block)
+        {
+            Transport t { true, 120.0, static_cast<double>(pos) * 120.0 / (60.0 * sr) };
+            const int n = seq.collect(t, sr, block, ev.data(), static_cast<int>(ev.size()));
+            for (int i = 0; i < n; ++i)
+                if (pos + ev[static_cast<std::size_t>(i)].offset < total)
+                    hits.push_back(pos + ev[static_cast<std::size_t>(i)].offset);
+        }
+        std::sort(hits.begin(), hits.end());
+        return hits;
+    };
+    const auto ref = run(512);
+    // Which of the 16 steps played, per pass.
+    std::array<std::uint32_t, 4> masks {};
+    for (long long h : ref)
+        masks[static_cast<std::size_t>(h / 96000)] |= 1u << static_cast<int>((h % 96000) / 6000);
+    CHECK(masks[0] != masks[1]);
+    CHECK(masks[0] != masks[2]); // same slot, next cycle: a new draw too
+    CHECK(masks[1] != masks[3]);
+    for (int block : { 1, 333, 4096 })
+        CHECK(run(block) == ref);
+
+    // The exported MIDI makes the same draws as playback.
+    Sequencer seq;
+    seq.setChain(chain);
+    const auto notes = exporting::realizeLane(seq, 2, 0, 64, 42);
+    REQUIRE(notes.size() == ref.size());
+    for (std::size_t i = 0; i < notes.size(); ++i)
+        CHECK(notes[i].tick == ref[i] / 6000 * (exporting::kMidiPpq / 4));
 }

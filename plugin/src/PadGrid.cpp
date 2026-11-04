@@ -1,5 +1,6 @@
 #include "PadGrid.h"
 
+#include "PartName.h"
 #include "Theme.h"
 
 PadGrid::PadGrid(ZeroDrumProcessor& owner) : owner_(owner)
@@ -33,6 +34,8 @@ int PadGrid::padAt(juce::Point<float> p) const
 
 float PadGrid::velocityAt(int part, juce::Point<float> p) const
 {
+    if (owner_.fullLevelPads())
+        return 1.0f;
     const auto r = padBounds(part).reduced(4.0f);
     // Top of the pad is full velocity, the bottom edge soft.
     return juce::jlimit(0.15f, 1.0f, 1.0f - 0.85f * (p.y - r.getY()) / juce::jmax(1.0f, r.getHeight()));
@@ -120,6 +123,9 @@ void PadGrid::mouseDown(const juce::MouseEvent& e)
             });
             menu.addSeparator();
         }
+        menu.addItem("Rename...", [this, part] {
+            zdui::askPartName(owner_, part, [this] { repaint(); if (onSampleChanged) onSampleChanged(selected_); });
+        });
         menu.addItem("Save part...", [this, part] { choosePartFile(part, true); });
         menu.addItem("Load part...", [this, part] { choosePartFile(part, false); });
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withMousePosition());
