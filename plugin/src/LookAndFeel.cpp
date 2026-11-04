@@ -280,6 +280,8 @@ juce::String formatValue(const juce::RangedAudioParameter& param, double v)
     const auto range = param.getNormalisableRange();
     if (auto* choice = dynamic_cast<const juce::AudioParameterChoice*>(&param))
         return choice->choices[juce::jlimit(0, choice->choices.size() - 1, juce::roundToInt(v))];
+    if (param.getName(64).endsWithIgnoreCase("Root Note"))
+        return juce::MidiMessage::getMidiNoteName(juce::roundToInt(v), true, true, 3);
     if (param.getName(64).endsWithIgnoreCase("Pan"))
     {
         const int amount = juce::roundToInt(std::abs(v) * 100.0);
@@ -301,7 +303,12 @@ juce::String formatValue(const juce::RangedAudioParameter& param, double v)
         return juce::String(v, 1) + unit; // ratios: "4.0:1"
     if (unit.isNotEmpty())
         return juce::String(v, std::abs(v) >= 100.0 ? 0 : 1) + " " + unit;
-    // Plain 0..1 amounts read best as a percentage.
+    // Plain amounts read best as a percentage: signed when the range is centred on zero.
+    if (range.start < 0.0f && juce::approximatelyEqual(range.start, -range.end) && range.end <= 1.0f)
+    {
+        const int amount = juce::roundToInt(v * 100.0);
+        return (amount > 0 ? "+" : "") + juce::String(amount) + " %";
+    }
     if (range.start >= 0.0f && range.end <= 1.0f)
         return juce::String(juce::roundToInt(v * 100.0)) + " %";
     return std::abs(v) >= 100.0 ? juce::String(juce::roundToInt(v)) : juce::String(v, std::abs(v) >= 10.0 ? 1 : 2);

@@ -842,6 +842,11 @@ void ZeroDrumProcessor::setAutoFill(bool on)
     publishPattern(next);
 }
 
+double ZeroDrumProcessor::currentBpm() const noexcept
+{
+    return value("freeRun") > 0.5f ? static_cast<double>(value("freeRunBpm")) : hostBpm_.load(std::memory_order_relaxed);
+}
+
 bool ZeroDrumProcessor::autoFill() const
 {
     const std::lock_guard<std::mutex> lock(patternMutex_);
@@ -1660,6 +1665,7 @@ void ZeroDrumProcessor::getStateInformation(juce::MemoryBlock& destData)
         else
             state.removeProperty(key, nullptr);
     }
+    state.setProperty("uiZoom", static_cast<double>(uiZoom()), nullptr);
     state.setProperty("muteMask", static_cast<juce::int64>(muteMask_.load()), nullptr);
     state.setProperty("soloMask", static_cast<juce::int64>(soloMask_.load()), nullptr);
     if (auto xml = state.createXml())
@@ -1698,6 +1704,7 @@ void ZeroDrumProcessor::setStateInformation(const void* data, int sizeInBytes)
     }
     for (int i = 0; i < zd::kMaxParts; ++i)
         customNames_[static_cast<std::size_t>(i)] = tree.getProperty("name" + juce::String(i)).toString();
+    setUiZoom(static_cast<float>(static_cast<double>(tree.getProperty("uiZoom", 1.0))));
 
     if (hasPattern)
     {

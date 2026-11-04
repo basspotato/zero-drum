@@ -162,6 +162,11 @@ public:
     /// Where the audio thread last was, in beats, and whether the transport runs.
     double playheadBeats() const noexcept { return playheadBeats_.load(std::memory_order_relaxed); }
     bool isTransportRunning() const noexcept { return transportRunning_.load(std::memory_order_relaxed); }
+    /// The tempo the beat plays at: the free-run tempo when that is on, else the host's.
+    double currentBpm() const noexcept;
+    /// The editor's zoom (0.75 to 1.5), saved with the session.
+    float uiZoom() const noexcept { return uiZoom_.load(std::memory_order_relaxed); }
+    void setUiZoom(float zoom) noexcept { uiZoom_.store(juce::jlimit(0.75f, 1.5f, zoom), std::memory_order_relaxed); }
 
     /// Maps a MIDI note to a part: GM kick/snare/closed hat on 36/38/42, part 6 on 37, else 36..51 -> parts 0..15.
     /// Matches zd::exporting::defaultMidiNote, so dragged clips play back on the right pads.
@@ -188,6 +193,11 @@ public:
     bool loadPadSample(int part, const juce::File& file);
     void clearPadSample(int part);
     bool padHasSample(int part) const noexcept;
+    /// The pad's decoded sample, or null (for drawing it).
+    zd::SampleDataPtr padSample(int part) const noexcept
+    {
+        return isSamplePad(part) ? padSamples_[static_cast<std::size_t>(part)] : nullptr;
+    }
     /// The pad's display name: the part name, the sample's file name, or "Part N".
     juce::String padName(int part) const;
     bool isAudioFile(const juce::String& path) const;
@@ -259,6 +269,7 @@ private:
     std::uint64_t seed_ = 1;
 
     std::atomic<double> hostBpm_ { 120.0 };
+    std::atomic<float> uiZoom_ { 1.0f };
 
     // Pad auditions: single-producer (message thread), single-consumer (audio thread) ring.
     static constexpr int kAuditionSlots = 64;

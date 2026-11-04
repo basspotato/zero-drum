@@ -5,6 +5,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include <array>
+#include <vector>
 #include <functional>
 #include <memory>
 
@@ -36,6 +37,15 @@ public:
     std::function<void(int)> onSampleChanged;
 
     int selectedPart() const noexcept { return selected_; }
+    /// Selects a pad without playing it (from the Sound tab's part list).
+    void select(int part)
+    {
+        if (part >= 0 && part < kPads && part != selected_)
+        {
+            selected_ = part;
+            repaint();
+        }
+    }
     std::function<void(int)> onSelect;
 
     static constexpr int kPads = 16;
@@ -44,6 +54,10 @@ public:
 
 private:
     void timerCallback() override;
+    void mouseMove(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
+    /// The pad's sample as a row of normalised peaks, cached per sample and width.
+    const std::vector<float>& padPeaks(int part, int width);
     juce::Rectangle<float> padBounds(int part) const;
     int padAt(juce::Point<float> p) const;
     float velocityAt(int part, juce::Point<float> p) const;
@@ -53,6 +67,14 @@ private:
     std::array<float, kPads> glow_ {};
     int selected_ = 0;
     int pressed_ = -1;
+    int hover_ = -1;
+    std::uint64_t lastMixState_ = 0; ///< mute, solo and audible masks, to repaint when they change
+    struct Peaks
+    {
+        const void* of = nullptr;
+        std::vector<float> values;
+    };
+    std::array<Peaks, kPads> peaks_ {};
     bool repeating_ = false;
     bool dragging_ = false;
     int dropTarget_ = -1;

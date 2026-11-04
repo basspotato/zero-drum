@@ -1,9 +1,11 @@
 #pragma once
 
+#include "GenStrip.h"
 #include "LookAndFeel.h"
 #include "MixPage.h"
 #include "PadGrid.h"
 #include "PluginProcessor.h"
+#include "SoundPage.h"
 #include "StepGrid.h"
 
 #include <juce_audio_processors/juce_audio_processors.h>
@@ -119,6 +121,22 @@ private:
     int holdFrames_ = 0;
 };
 
+/// Play state, tempo and position, at the right of the tab bar. In the standalone a click
+/// starts and stops the free-running clock (as Space does).
+class TransportView final : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+{
+public:
+    explicit TransportView(ZeroDrumProcessor& owner);
+    void paint(juce::Graphics&) override;
+    void mouseUp(const juce::MouseEvent&) override;
+
+private:
+    void timerCallback() override;
+    ZeroDrumProcessor& owner_;
+    bool playing_ = false;
+    double bpm_ = 0.0, beats_ = -1.0;
+};
+
 class ZeroDrumEditor final : public juce::AudioProcessorEditor, public juce::DragAndDropContainer, private juce::Timer
 {
 public:
@@ -133,6 +151,9 @@ private:
     void showKitMenu();
     bool keyPressed(const juce::KeyPress& key) override;
     void chooseKitFile(bool save);
+    /// Scales the whole interface (0.75 to 1.5) and keeps the window's content the same.
+    void setZoom(float zoom);
+    juce::Rectangle<int> unzoomedBounds() const;
 
     ZeroDrumProcessor& owner_;
     juce::SharedResourcePointer<zdui::LookAndFeel> look_; ///< declared first, so it outlives every child
@@ -147,6 +168,9 @@ private:
     juce::Label patternLabel_ { {}, "PATTERN" };
     juce::Label hints_;
     OutputMeter meter_ { owner_ };
+    TransportView transport_ { owner_ };
+    juce::ComboBox zoomBox_;
+    float zoom_ = 1.0f;
     std::vector<std::unique_ptr<MidiDragChip>> chips_;
     juce::Label summary_;
     std::array<SlotButton, zd::kMaxChain> slots_;
@@ -164,8 +188,10 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> fullLevelAttachment_;
     juce::TextButton tap_ { "Tap" };
     juce::TooltipWindow tooltips_ { this };
-    juce::GenericAudioProcessorEditor generic_;
+    SoundPage sound_;
     MixPage mix_;
+    LayoutComponent beatPage_;
+    GenStrip genStrip_;
     StepGrid steps_;
     LayoutComponent padsPage_;
     PadGrid pads_;

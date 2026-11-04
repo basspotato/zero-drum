@@ -333,3 +333,26 @@ TEST_CASE("Lane copy and paste across slots, ramps, reset sound, one-part audio"
     CHECK(kick.getFileName().contains("Kick"));
     CHECK(kick.getSize() == allSize); // same length, just one part in it
 }
+
+TEST_CASE("Zoom and tempo readout: the zoom is clamped and saved; tempo follows free run")
+{
+    juce::ScopedJuceInitialiser_GUI init;
+    auto p = std::make_unique<ZeroDrumProcessor>();
+    p->prepareToPlay(48000.0, 512);
+    CHECK(p->uiZoom() == doctest::Approx(1.0f));
+    p->setUiZoom(3.0f);
+    CHECK(p->uiZoom() == doctest::Approx(1.5f));
+    p->setUiZoom(0.1f);
+    CHECK(p->uiZoom() == doctest::Approx(0.75f));
+    p->setUiZoom(1.25f);
+    juce::MemoryBlock state;
+    p->getStateInformation(state);
+    auto q = std::make_unique<ZeroDrumProcessor>();
+    q->prepareToPlay(48000.0, 512);
+    q->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+    CHECK(q->uiZoom() == doctest::Approx(1.25f));
+
+    set(*p, "freeRun", 1.0f);
+    set(*p, "freeRunBpm", 140.0f);
+    CHECK(p->currentBpm() == doctest::Approx(140.0).epsilon(0.01));
+}

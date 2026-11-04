@@ -94,6 +94,30 @@ juce::Rectangle<float> StepGrid::soloBox(int row) const
     return muteBox(row).translated(20.0f, 0.0f);
 }
 
+juce::Rectangle<float> StepGrid::lockBox(int row) const
+{
+    return muteBox(row).translated(-22.0f, 0.0f);
+}
+
+juce::Rectangle<float> StepGrid::menuBox(int row) const
+{
+    return muteBox(row).translated(-44.0f, 0.0f);
+}
+
+juce::RangedAudioParameter* StepGrid::lockParam(int part) const
+{
+    return part >= 0 && part < ZeroDrumProcessor::kNumStripParts ? owner_.state().getParameter("lock" + juce::String(part)) : nullptr;
+}
+
+void StepGrid::setSelectedPart(int part)
+{
+    if (part != selected_)
+    {
+        selected_ = part;
+        repaint();
+    }
+}
+
 void StepGrid::shiftLane(int lane, int by)
 {
     // Rotates the lane's steps inside its length: later (right) for by > 0, earlier for by < 0.
@@ -160,11 +184,18 @@ void StepGrid::paint(juce::Graphics& g)
         const auto& lane = laneOfRow(l);
         const auto colour = zdui::laneColour(part);
         const auto row = cellBounds(l, 0);
+        if (part == selected_)
+        {
+            g.setColour(zdui::kRaised);
+            g.fillRoundedRectangle(juce::Rectangle<float>(2.0f, row.getY() + 3.0f, kHeaderWidth + 2.0f, row.getHeight() - 6.0f), 6.0f);
+            g.setColour(colour);
+            g.fillRoundedRectangle(juce::Rectangle<float>(2.0f, row.getY() + 3.0f, 3.0f, row.getHeight() - 6.0f), 1.5f);
+        }
         g.setColour(colour);
         g.setFont(juce::FontOptions(13.0f, juce::Font::bold));
         const bool muted = ((owner_.audibleMask() >> part) & 1u) == 0;
         g.setColour(muted ? colour.withAlpha(0.4f) : colour);
-        g.drawFittedText(owner_.padName(part), juce::Rectangle<float>(6.0f, row.getY(), kHeaderWidth - 44.0f, row.getHeight()).toNearestInt(),
+        g.drawFittedText(owner_.padName(part), juce::Rectangle<float>(10.0f, row.getY(), menuBox(l).getX() - 12.0f, row.getHeight()).toNearestInt(),
                          juce::Justification::centredLeft, 1, 0.7f);
         auto box = [&](juce::Rectangle<float> b, const char* text, bool on, juce::Colour onColour) {
             g.setColour(on ? onColour : zdui::kCellOff);
@@ -174,6 +205,29 @@ void StepGrid::paint(juce::Graphics& g)
             g.drawText(text, b, juce::Justification::centred);
         };
         box(muteBox(l), "M", owner_.laneMuted(part), juce::Colour(0xffe0b040));
+        {
+            // Menu button: three dots.
+            const auto m = menuBox(l);
+            g.setColour(zdui::kDim);
+            for (int d = -1; d <= 1; ++d)
+                g.fillEllipse(m.getCentreX() - 1.5f + d * 5.0f, m.getCentreY() - 1.5f, 3.0f, 3.0f);
+        }
+        if (auto* lock = lockParam(part))
+        {
+            // A small padlock: shackle closed when locked.
+            const bool on = lock->getValue() > 0.5f;
+            const auto b = lockBox(l);
+            g.setColour(on ? zdui::kText : zdui::kCellOff);
+            g.fillRoundedRectangle(b, 3.0f);
+            const auto body = juce::Rectangle<float>(b.getCentreX() - 4.5f, b.getCentreY() - 1.0f, 9.0f, 6.5f);
+            juce::Path shackle;
+            const float lift = on ? 0.0f : 2.0f;
+            shackle.addCentredArc(b.getCentreX() + (on ? 0.0f : 1.5f), body.getY() - lift, 3.0f, 3.5f, 0.0f,
+                                  -juce::MathConstants<float>::halfPi, juce::MathConstants<float>::halfPi, true);
+            g.setColour(on ? juce::Colours::black : zdui::kDim);
+            g.strokePath(shackle, juce::PathStrokeType(1.4f));
+            g.fillRoundedRectangle(body, 1.5f);
+        }
         box(soloBox(l), "S", owner_.laneSoloed(part), juce::Colour(0xff40c0e0));
 
         for (int s = firstColumn(); s < firstColumn() + visibleColumns(); ++s)
@@ -319,8 +373,27 @@ void StepGrid::mouseDown(const juce::MouseEvent& e)
                 repaint();
                 return;
             }
+            if (auto* lock = lockParam(part); lock != nullptr && lockBox(r).contains(e.position))
+            {
+                lock->beginChangeGesture();
+                lock->setValueNotifyingHost(lock->getValue() > 0.5f ? 0.0f : 1.0f);
+                lock->endChangeGesture();
+                repaint();
+                return;
+            }
+            const auto row = cellBounds(r, 0);
+            if (e.position.y < row.getY() || e.position.y >= row.getBottom())
+                continue;
+            if (e.mods.isPopupMenu() || menuBox(r).expanded(4.0f).contains(e.position))
+            {
+                showLaneMenu(e.position);
+                return;
+            }
+            setSelectedPart(part);
+            if (onSelectPart)
+                onSelectPart(part);
+            return;
         }
-        showLaneMenu(e.position);
         return;
     }
     int lane = 0, step = 0;

@@ -24,7 +24,9 @@ target_sources(ZeroDrum PRIVATE
     src/PadGrid.cpp
     src/StepGrid.cpp
     src/MixPage.cpp
-    src/LookAndFeel.cpp)
+    src/LookAndFeel.cpp
+    src/SoundPage.cpp
+    src/GenStrip.cpp)
 
 target_compile_definitions(ZeroDrum PUBLIC
     JUCE_WEB_BROWSER=0

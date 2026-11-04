@@ -183,7 +183,7 @@ void PartPanel::resized()
 }
 
 ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
-    : AudioProcessorEditor(owner), owner_(owner), generic_(owner), mix_(owner), steps_(owner), pads_(owner), partPanel_(owner)
+    : AudioProcessorEditor(owner), owner_(owner), sound_(owner), mix_(owner), genStrip_(owner), steps_(owner), pads_(owner), partPanel_(owner)
 {
     setLookAndFeel(&look_.get());
     generate_.setColour(juce::TextButton::buttonColourId, zdui::kAccent);
@@ -273,9 +273,25 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     setWantsKeyboardFocus(true);
     refreshSlots();
 
-    pads_.onSelect = [this](int part) { partPanel_.showPart(part); };
+    // One selected part everywhere: the pads, the lane headers, the part panel and the Sound tab.
+    pads_.onSelect = [this](int part) {
+        partPanel_.showPart(part);
+        sound_.showPart(part);
+        steps_.setSelectedPart(part);
+    };
+    sound_.onSelect = [this](int part) {
+        pads_.select(part);
+        partPanel_.showPart(part);
+        steps_.setSelectedPart(part);
+    };
+    steps_.onSelectPart = [this](int part) {
+        pads_.select(part);
+        partPanel_.showPart(part);
+        sound_.showPart(part);
+    };
     pads_.onSampleChanged = [this](int part) {
         partPanel_.showPart(part);
+        sound_.showPart(part);
         steps_.refreshLanes();
     };
     partPanel_.onLoad = [this](int part) { pads_.chooseSample(part); };
@@ -283,6 +299,7 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
         owner_.clearPadSample(part);
         pads_.repaint();
         partPanel_.showPart(part);
+        sound_.showPart(part);
         steps_.refreshLanes();
     };
     padHint_.setText("Click to play, higher is louder. Shift: note repeat. Drag a pad out for its MIDI.", juce::dontSendNotification);
@@ -331,15 +348,33 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
 
     tabs_.setTabBarDepth(36);
     tabs_.setOutline(0);
-    tabs_.addTab("Beat", zdui::kBackground, &steps_, false);
+    beatPage_.onResize = [this] {
+        auto page = beatPage_.getLocalBounds();
+        genStrip_.setBounds(page.removeFromTop(GenStrip::kHeight).reduced(8, 0));
+        steps_.setBounds(page);
+    };
+    beatPage_.addAndMakeVisible(genStrip_);
+    beatPage_.addAndMakeVisible(steps_);
+    tabs_.addTab("Beat", zdui::kBackground, &beatPage_, false);
     tabs_.addTab("Pads", zdui::kBackground, &padsPage_, false);
     tabs_.addTab("Mix", zdui::kBackground, &mix_, false);
-    tabs_.addTab("Sound", zdui::kBackground, &generic_, false);
+    tabs_.addTab("Sound", zdui::kBackground, &sound_, false);
     addAndMakeVisible(tabs_);
 
+    addAndMakeVisible(transport_);
+    const float zooms[] { 0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f };
+    for (const float z : zooms)
+        zoomBox_.addItem(juce::String(juce::roundToInt(z * 100.0f)) + " %", juce::roundToInt(z * 100.0f));
+    zoomBox_.setTooltip("Interface size (Ctrl + and Ctrl -)");
+    zoomBox_.setWantsKeyboardFocus(false);
+    zoomBox_.onChange = [this] { setZoom(static_cast<float>(zoomBox_.getSelectedId()) / 100.0f); };
+    addAndMakeVisible(zoomBox_);
+
     setResizable(true, true);
-    setResizeLimits(880, 660, 1800, 1400);
-    setSize(900, 800);
+    zoom_ = owner_.uiZoom();
+    zoomBox_.setSelectedId(juce::roundToInt(zoom_ * 100.0f), juce::dontSendNotification);
+    setResizeLimits(juce::roundToInt(880 * zoom_), juce::roundToInt(660 * zoom_), juce::roundToInt(1800 * zoom_), juce::roundToInt(1400 * zoom_));
+    setSize(juce::roundToInt(900 * zoom_), juce::roundToInt(800 * zoom_));
     timerCallback();
     startTimerHz(4);
 }
@@ -411,6 +446,21 @@ bool ZeroDrumEditor::keyPressed(const juce::KeyPress& key)
         return key.getModifiers().isShiftDown() ? owner_.redo() : owner_.undo();
     if (key.getModifiers().isCommandDown() && key.getKeyCode() == 'Y')
         return owner_.redo();
+    // Ctrl + / Ctrl - / Ctrl 0 zoom the interface.
+    if (key.getModifiers().isCommandDown() && (key.getKeyCode() == '=' || key.getKeyCode() == '+' || key.getKeyCode() == '-' || key.getKeyCode() == '0'))
+    {
+        const float zooms[] { 0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f };
+        int index = 2;
+        for (int i = 0; i < 6; ++i)
+            if (zooms[i] <= zoom_ + 0.001f)
+                index = i;
+        if (key.getKeyCode() == '0')
+            index = 2;
+        else
+            index = juce::jlimit(0, 5, index + (key.getKeyCode() == '-' ? -1 : 1));
+        setZoom(zooms[index]);
+        return true;
+    }
     // 1..4 pick pattern slots A..D.
     // Space starts and stops the standalone (its free-running clock); in a DAW the host owns play.
     if (key == juce::KeyPress::spaceKey && owner_.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
@@ -463,6 +513,7 @@ void ZeroDrumEditor::loadKitFile(const juce::File& file)
         steps_.refreshLanes();
         pads_.repaint();
         partPanel_.showPart(pads_.selectedPart());
+        sound_.showPart(sound_.shownPart());
         refreshSlots();
     }
 }
@@ -565,17 +616,38 @@ void OutputMeter::paint(juce::Graphics& g)
     }
 }
 
+juce::Rectangle<int> ZeroDrumEditor::unzoomedBounds() const
+{
+    return { juce::roundToInt(static_cast<float>(getWidth()) / zoom_), juce::roundToInt(static_cast<float>(getHeight()) / zoom_) };
+}
+
+void ZeroDrumEditor::setZoom(float zoom)
+{
+    zoom = juce::jlimit(0.75f, 1.5f, zoom);
+    if (juce::approximatelyEqual(zoom, zoom_))
+        return;
+    const auto content = unzoomedBounds();
+    zoom_ = zoom;
+    owner_.setUiZoom(zoom);
+    zoomBox_.setSelectedId(juce::roundToInt(zoom * 100.0f), juce::dontSendNotification);
+    setResizeLimits(juce::roundToInt(880 * zoom), juce::roundToInt(660 * zoom), juce::roundToInt(1800 * zoom), juce::roundToInt(1400 * zoom));
+    setSize(juce::roundToInt(static_cast<float>(content.getWidth()) * zoom), juce::roundToInt(static_cast<float>(content.getHeight()) * zoom));
+    resized();
+    repaint();
+}
+
 void ZeroDrumEditor::paint(juce::Graphics& g)
 {
     g.fillAll(zdui::kBackground);
+    g.addTransform(juce::AffineTransform::scale(zoom_));
     // Header band (generator and pattern rows) and the status line.
-    const auto header = getLocalBounds().removeFromTop(96);
+    const auto header = unzoomedBounds().removeFromTop(96);
     g.setColour(zdui::kPanel);
     g.fillRect(header);
     g.setColour(zdui::kLine);
     g.fillRect(header.getX(), header.getY() + 56, header.getWidth(), 1);
     g.fillRect(header.getX(), header.getBottom() - 1, header.getWidth(), 1);
-    const auto footer = getLocalBounds().removeFromBottom(28);
+    const auto footer = unzoomedBounds().removeFromBottom(28);
     g.setColour(zdui::kPanel);
     g.fillRect(footer);
     g.setColour(zdui::kLine);
@@ -595,7 +667,8 @@ void ZeroDrumEditor::paint(juce::Graphics& g)
 void ZeroDrumEditor::resized()
 {
     constexpr int pad = 16, gap = 8, small = 4;
-    auto area = getLocalBounds();
+    // Everything is laid out at 100 % and drawn through one scale, so the zoom changes nothing else.
+    auto area = unzoomedBounds();
 
     // Row 1: wordmark | style, Generate, Mutate, Fill, Build | undo, redo | kit, export | meter.
     auto top = area.removeFromTop(56).reduced(pad, 12);
@@ -645,4 +718,84 @@ void ZeroDrumEditor::resized()
     summary_.setBounds(footer.removeFromLeft(280));
     hints_.setBounds(footer);
     tabs_.setBounds(area.reduced(8, 0));
+    // Over the tab bar's empty right end: the transport readout and the zoom.
+    auto bar = area.reduced(16, 0).removeFromTop(36).reduced(0, 5);
+    zoomBox_.setBounds(bar.removeFromRight(76));
+    bar.removeFromRight(gap);
+    transport_.setBounds(bar.removeFromRight(196));
+
+    const auto scale = juce::AffineTransform::scale(zoom_);
+    for (auto* child : getChildren())
+        if (dynamic_cast<juce::ResizableCornerComponent*>(child) == nullptr && dynamic_cast<juce::ResizableBorderComponent*>(child) == nullptr
+            && dynamic_cast<juce::TooltipWindow*>(child) == nullptr)
+            child->setTransform(scale);
+}
+
+TransportView::TransportView(ZeroDrumProcessor& owner) : owner_(owner)
+{
+    if (owner.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        setTooltip("Click or press Space to start and stop");
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+    else
+        setTooltip("Follows the host's transport");
+    startTimerHz(15);
+}
+
+void TransportView::timerCallback()
+{
+    const bool playing = owner_.isTransportRunning();
+    const double bpm = owner_.currentBpm();
+    const double beats = playing ? std::floor(owner_.playheadBeats()) : -1.0;
+    if (playing != playing_ || !juce::approximatelyEqual(bpm, bpm_) || !juce::approximatelyEqual(beats, beats_))
+    {
+        playing_ = playing;
+        bpm_ = bpm;
+        beats_ = beats;
+        repaint();
+    }
+}
+
+void TransportView::paint(juce::Graphics& g)
+{
+    auto r = getLocalBounds().toFloat();
+    g.setColour(zdui::kPanel);
+    g.fillRoundedRectangle(r, 6.0f);
+    g.setColour(playing_ ? zdui::kGood.withAlpha(0.6f) : zdui::kLine);
+    g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
+    auto inner = r.reduced(10.0f, 0.0f);
+    // Play triangle or stop square.
+    const auto icon = inner.removeFromLeft(10.0f).withSizeKeepingCentre(10.0f, 10.0f);
+    g.setColour(playing_ ? zdui::kGood : zdui::kDim);
+    if (playing_)
+    {
+        juce::Path p;
+        p.addTriangle(icon.getX(), icon.getY(), icon.getRight(), icon.getCentreY(), icon.getX(), icon.getBottom());
+        g.fillPath(p);
+    }
+    else
+        g.fillRoundedRectangle(icon.reduced(1.0f), 1.5f);
+    inner.removeFromLeft(8.0f);
+    g.setFont(juce::FontOptions(zdui::kLabel, juce::Font::bold));
+    g.setColour(zdui::kText);
+    const auto tempo = inner.removeFromLeft(78.0f);
+    g.drawText(juce::String(bpm_, 1) + " BPM", tempo, juce::Justification::centredLeft);
+    g.setColour(playing_ ? zdui::kText : zdui::kDim);
+    g.setFont(juce::FontOptions(zdui::kLabel));
+    juce::String where = "Stopped";
+    if (playing_ && beats_ >= 0.0)
+    {
+        const auto beat = static_cast<juce::int64>(beats_);
+        where = "Bar " + juce::String(beat / 4 + 1) + "." + juce::String(beat % 4 + 1);
+    }
+    g.drawText(where, inner, juce::Justification::centredRight);
+}
+
+void TransportView::mouseUp(const juce::MouseEvent& e)
+{
+    if (owner_.wrapperType != juce::AudioProcessor::wrapperType_Standalone || !getLocalBounds().contains(e.getPosition()))
+        return;
+    if (auto* run = owner_.state().getParameter("freeRun"))
+        run->setValueNotifyingHost(run->getValue() > 0.5f ? 0.0f : 1.0f);
 }
