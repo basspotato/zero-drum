@@ -172,7 +172,8 @@ void Part::render(float* left, float* right, int numSamples) noexcept
     // The strip runs even when no voice is sounding, so filter and envelope tails evolve
     // identically whatever the block size. A part with a neutral strip and no voices is skipped.
     const bool stripNeutral = strip.attack == 0.0f && strip.sustain == 0.0f
-                           && strip.filterMode == FilterMode::Off && strip.drive == 0.0f;
+                           && strip.filterMode == FilterMode::Off && strip.drive == 0.0f
+                           && strip.crushBits <= 0.0f && strip.crushRateHz <= 0.0f;
     if (stripNeutral && !isActive())
     {
         // Keep the duck envelope in step, so the output does not depend on block size.

@@ -81,6 +81,10 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
   part can stack a second engine on every hit: **Snare Layer** puts a clap on the snare (or a
   snare under the clap). Style kits choose: claps for house, techno, trance, Jersey club and
   hardstyle; a snare plus clap stack for trap, drill, dubstep, festival, pop and reggaeton.
+- **Crush** (per part, in the strip): bit depth (**Crush Bits**, 4 to 16) and a sample-and-hold
+  rate (**Crush Rate**, 4 to 48 kHz; 48 kHz means no rate reduction), with an anti-alias
+  **Crush Filter** before the hold. The boom bap kit puts every drum through the classic 12-bit,
+  26.04 kHz sampler; UK garage takes 12 bits on snare and hats. The 808 stays clean.
 - **Sidechain**: every kick ducks the 808 (**808 Sidechain**) and optionally the perc
   (**Perc Sidechain**), with a 3 ms click-free attack and **Sidechain Release**. Style kits set
   it: a short duck for trap-family styles, a full pump for house, trance and festival.

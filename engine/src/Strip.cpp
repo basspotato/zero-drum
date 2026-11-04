@@ -6,6 +6,7 @@ void Strip::prepare(double sampleRate) noexcept
 {
     sampleRate_ = sampleRate;
     shaper_.prepare(sampleRate);
+    crusher_.prepare(sampleRate);
     reset();
 }
 
@@ -14,6 +15,7 @@ void Strip::reset() noexcept
     shaper_.reset();
     filter_.reset();
     drive_.reset();
+    crusher_.reset();
     lastCutoff_ = lastResonance_ = lastDrive_ = -1.0f;
 }
 
@@ -38,10 +40,14 @@ void Strip::process(float* mono, int numSamples, const StripParams& p) noexcept
     updateFilter(p);
     const bool shape = !shaper_.isNeutral();
     const bool drive = p.drive > 0.0f;
+    crusher_.set(p.crushBits, p.crushRateHz);
+    const bool crush = crusher_.active();
 
     for (int i = 0; i < numSamples; ++i)
     {
         double x = mono[i];
+        if (crush)
+            x = crusher_.process(x, p.crushFilter);
         if (shape)
             x = shaper_.process(x);
         switch (p.filterMode)
