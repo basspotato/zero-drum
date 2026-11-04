@@ -46,6 +46,11 @@ ZeroDrumProcessor::ZeroDrumProcessor()
         for (int k = 0; k < kNumStripSuffixes; ++k)
             stripParams_[static_cast<std::size_t>(i)][static_cast<std::size_t>(k)] =
                 apvts_.getRawParameterValue("p" + juce::String(i) + kStripSuffixes[k]);
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+        for (int k = 0; k < kNumPadSuffixes; ++k)
+            padParams_[static_cast<std::size_t>(i)][static_cast<std::size_t>(k)] =
+                apvts_.getRawParameterValue("p" + juce::String(i) + kPadSuffixes[k]);
+    formats_.registerBasicFormats();
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLayout()
@@ -163,6 +168,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "lock" + juce::String(i), 1 },
                                                               "Lock " + juce::String(kStripNames[i]), false));
 
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+    {
+        const juce::String id = "p" + juce::String(i);
+        const juce::String name = "Pad " + juce::String(i + 1) + " ";
+        auto add = [&](const char* suffix, const char* label, Range range, float def, const char* unit) {
+            layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + suffix, 1 }, name + label, range, def,
+                                                                   juce::AudioParameterFloatAttributes().withLabel(unit)));
+        };
+        add("SmpPitch", "Pitch", Range { -24.0f, 24.0f, 0.01f }, 0.0f, "st");
+        add("SmpDecay", "Decay", skewed(0.0f, 4.0f, 0.6f), 0.0f, "s");
+        add("SmpStart", "Start", Range { 0.0f, 0.9f }, 0.0f, "");
+        add("Level", "Level", Range { -36.0f, 6.0f }, -6.0f, "dB");
+        add("Pan", "Pan", Range { -1.0f, 1.0f }, 0.0f, "");
+        add("RevSend", "Reverb", Range { 0.0f, 1.0f }, 0.0f, "");
+    }
+
     layout.add(floatParam("masterLevel", "Master Level", Range { -24.0f, 6.0f }, zd::Engine::kDefaultMasterDb, "dB"));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "clipOn", 1 }, "Master Clipper", true));
     layout.add(floatParam("subDuck", "808 Sidechain", Range { 0.0f, 1.0f }, 0.5f));
@@ -261,6 +282,17 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
         engine.part(i).velocityTone = stripValue(i, "VelTone");
         engine.part(i).mix.reverbSend = stripValue(i, "RevSend");
     }
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+    {
+        const auto& pp = padParams_[static_cast<std::size_t>(i)];
+        auto& part = engine.part(i);
+        part.sampleParams.pitchSemitones = pp[0]->load(std::memory_order_relaxed);
+        part.sampleParams.decay = pp[1]->load(std::memory_order_relaxed);
+        part.sampleParams.start = pp[2]->load(std::memory_order_relaxed);
+        part.mix.gainDb = pp[3]->load(std::memory_order_relaxed);
+        part.mix.pan = pp[4]->load(std::memory_order_relaxed);
+        part.mix.reverbSend = pp[5]->load(std::memory_order_relaxed);
+    }
     zd::dsp::ReverbSettings rv;
     rv.decay = value("revDecay");
     rv.size = value("revSize");
@@ -307,6 +339,7 @@ void ZeroDrumProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     engine_.setMasterStage(true);
     setLatencySamples(engine_.masterLatency());
     zd::loadDefaultKit(engine_);
+    applyPadSamples(engine_);
     {
         const std::lock_guard<std::mutex> lock(patternMutex_);
         engine_.submitPattern(uiPattern_);
@@ -474,7 +507,81 @@ std::array<std::string, zd::kMaxParts> ZeroDrumProcessor::partNames() const
     std::array<std::string, zd::kMaxParts> names {};
     for (int i = 0; i < kNumStripParts; ++i)
         names[static_cast<std::size_t>(i)] = kStripNames[i];
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+        if (padHasSample(i))
+            names[static_cast<std::size_t>(i)] = padName(i).toStdString();
     return names;
+}
+
+// ------------------------------------------------------------------------- pad samples
+
+void ZeroDrumProcessor::applyPadSamples(zd::Engine& engine) const
+{
+    // Only while that engine is not processing (prepare time or an offline copy).
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+    {
+        const auto& s = padSamples_[static_cast<std::size_t>(i)];
+        engine.setSample(i, s);
+        engine.part(i).type = s ? zd::EngineType::Sample : zd::EngineType::Off;
+    }
+}
+
+bool ZeroDrumProcessor::isAudioFile(const juce::String& path) const
+{
+    return formats_.findFormatForFileExtension(juce::File(path).getFileExtension()) != nullptr;
+}
+
+bool ZeroDrumProcessor::padHasSample(int part) const noexcept
+{
+    return isSamplePad(part) && padSamples_[static_cast<std::size_t>(part)] != nullptr;
+}
+
+juce::String ZeroDrumProcessor::padName(int part) const
+{
+    if (part >= 0 && part < kNumStripParts)
+        return kStripNames[part];
+    if (padHasSample(part))
+        return padFiles_[static_cast<std::size_t>(part)].getFileNameWithoutExtension();
+    return "Part " + juce::String(part + 1);
+}
+
+bool ZeroDrumProcessor::loadPadSample(int part, const juce::File& file)
+{
+    if (!isSamplePad(part))
+        return false;
+    std::unique_ptr<juce::AudioFormatReader> reader(formats_.createReaderFor(file));
+    if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate <= 0.0 || reader->numChannels == 0)
+        return false;
+    const auto length = static_cast<int>(std::min<juce::int64>(reader->lengthInSamples,
+                                                               static_cast<juce::int64>(reader->sampleRate * kMaxSampleSeconds)));
+    const int channels = static_cast<int>(reader->numChannels);
+    juce::AudioBuffer<float> buffer(channels, length);
+    if (!reader->read(&buffer, 0, length, 0, true, true))
+        return false;
+
+    auto data = std::make_shared<zd::SampleData>();
+    data->sampleRate = reader->sampleRate;
+    data->samples.assign(static_cast<std::size_t>(length), 0.0f);
+    const float scale = 1.0f / static_cast<float>(channels);
+    for (int c = 0; c < channels; ++c)
+    {
+        const float* in = buffer.getReadPointer(c);
+        for (int n = 0; n < length; ++n)
+            data->samples[static_cast<std::size_t>(n)] += in[n] * scale;
+    }
+    padSamples_[static_cast<std::size_t>(part)] = data;
+    padFiles_[static_cast<std::size_t>(part)] = file;
+    engine_.submitSample(part, std::move(data));
+    return true;
+}
+
+void ZeroDrumProcessor::clearPadSample(int part)
+{
+    if (!isSamplePad(part))
+        return;
+    padSamples_[static_cast<std::size_t>(part)].reset();
+    padFiles_[static_cast<std::size_t>(part)] = juce::File {};
+    engine_.submitSample(part, nullptr);
 }
 
 void ZeroDrumProcessor::exportLoopAsync(const juce::File& directory, ExportCallback done)
@@ -490,6 +597,7 @@ void ZeroDrumProcessor::exportLoopAsync(const juce::File& directory, ExportCallb
     engine->setMasterStage(true); // export through the same clipper as playback
     engine->sequencer().pattern() = patternSnapshot();
     applyParameters(*engine);
+    applyPadSamples(*engine);
 
     zd::exporting::ExportOptions options;
     options.bpm = exportBpm();
@@ -749,6 +857,14 @@ void ZeroDrumProcessor::getStateInformation(juce::MemoryBlock& destData)
         state.setProperty("pattern", juce::String(zd::serializePattern(uiPattern_)), nullptr);
         state.setProperty("seed", juce::String(static_cast<juce::int64>(seed_)), nullptr);
     }
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+    {
+        const juce::Identifier key("pad" + juce::String(i) + "Sample");
+        if (padHasSample(i))
+            state.setProperty(key, padFiles_[static_cast<std::size_t>(i)].getFullPathName(), nullptr);
+        else
+            state.removeProperty(key, nullptr);
+    }
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, destData);
 }
@@ -764,6 +880,14 @@ void ZeroDrumProcessor::setStateInformation(const void* data, int sizeInBytes)
     const bool hasPattern = zd::deserializePattern(tree.getProperty("pattern").toString().toStdString(), loaded);
     const auto seed = static_cast<std::uint64_t>(tree.getProperty("seed", 1).toString().getLargeIntValue());
     apvts_.replaceState(tree);
+    // Samples are saved by path; a file that moved leaves its pad empty.
+    for (int i = kFirstSamplePad; i < zd::kMaxParts; ++i)
+    {
+        const auto path = tree.getProperty("pad" + juce::String(i) + "Sample").toString();
+        const juce::File file = path.isNotEmpty() && juce::File::isAbsolutePath(path) ? juce::File(path) : juce::File {};
+        if (!file.existsAsFile() || !loadPadSample(i, file))
+            clearPadSample(i);
+    }
 
     if (hasPattern)
     {

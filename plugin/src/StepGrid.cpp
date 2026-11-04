@@ -6,14 +6,43 @@
 
 StepGrid::StepGrid(ZeroDrumProcessor& owner) : owner_(owner), pattern_(owner.currentPattern())
 {
+    refreshLanes();
     startTimerHz(30);
+}
+
+void StepGrid::refreshLanes()
+{
+    rows_.clear();
+    int length = 16;
+    for (int p = 0; p < ZeroDrumProcessor::kNumStripParts; ++p)
+    {
+        rows_.push_back(p);
+        length = std::max(length, pattern_.lanes[static_cast<std::size_t>(p)].length);
+    }
+    for (int p = ZeroDrumProcessor::kFirstSamplePad; p < zd::kMaxParts; ++p)
+        if (owner_.padHasSample(p))
+        {
+            rows_.push_back(p);
+            // A pad that never had a lane gets an empty one the length of the beat.
+            if (pattern_.lanes[static_cast<std::size_t>(p)].length <= 0)
+            {
+                const int len = std::min(length, zd::kMaxStepsPerLane);
+                pattern_.lanes[static_cast<std::size_t>(p)].length = len;
+                owner_.editPattern([p, len](zd::Pattern& pat) {
+                    auto& lane = pat.lanes[static_cast<std::size_t>(p)];
+                    if (lane.length <= 0)
+                        lane.length = len;
+                });
+            }
+        }
+    repaint();
 }
 
 int StepGrid::columns() const noexcept
 {
     int n = 16;
-    for (int l = 0; l < kLanes; ++l)
-        n = std::max(n, pattern_.lanes[static_cast<std::size_t>(l)].length);
+    for (int r = 0; r < rows(); ++r)
+        n = std::max(n, laneOfRow(r).length);
     return std::min(n, zd::kMaxStepsPerLane);
 }
 
@@ -21,7 +50,7 @@ juce::Rectangle<float> StepGrid::cellBounds(int lane, int step) const
 {
     const auto area = getLocalBounds().toFloat().reduced(6.0f).withTrimmedLeft(static_cast<float>(kHeaderWidth));
     const float w = area.getWidth() / static_cast<float>(columns());
-    const float h = area.getHeight() / static_cast<float>(kLanes);
+    const float h = area.getHeight() / static_cast<float>(std::max(1, rows()));
     return { area.getX() + step * w, area.getY() + lane * h, w, h };
 }
 
@@ -30,7 +59,8 @@ bool StepGrid::cellAt(juce::Point<float> p, int& lane, int& step) const
     const auto area = getLocalBounds().toFloat().reduced(6.0f).withTrimmedLeft(static_cast<float>(kHeaderWidth));
     if (!area.contains(p))
         return false;
-    lane = juce::jlimit(0, kLanes - 1, static_cast<int>((p.y - area.getY()) / (area.getHeight() / kLanes)));
+    const int row = juce::jlimit(0, rows() - 1, static_cast<int>((p.y - area.getY()) / (area.getHeight() / static_cast<float>(rows()))));
+    lane = rows_[static_cast<std::size_t>(row)];
     step = juce::jlimit(0, columns() - 1, static_cast<int>((p.x - area.getX()) / (area.getWidth() / columns())));
     return step < pattern_.lanes[static_cast<std::size_t>(lane)].length;
 }
@@ -39,15 +69,16 @@ void StepGrid::paint(juce::Graphics& g)
 {
     g.fillAll(zdui::kBackground);
     const int cols = columns();
-    for (int l = 0; l < kLanes; ++l)
+    for (int l = 0; l < rows(); ++l)
     {
-        const auto& lane = pattern_.lanes[static_cast<std::size_t>(l)];
-        const auto colour = zdui::laneColour(l);
+        const int part = rows_[static_cast<std::size_t>(l)];
+        const auto& lane = laneOfRow(l);
+        const auto colour = zdui::laneColour(part);
         const auto row = cellBounds(l, 0);
         g.setColour(colour);
         g.setFont(juce::FontOptions(13.0f, juce::Font::bold));
-        g.drawText(ZeroDrumProcessor::kStripNames[l], juce::Rectangle<float>(6.0f, row.getY(), kHeaderWidth - 8.0f, row.getHeight()).toNearestInt(),
-                   juce::Justification::centredLeft);
+        g.drawFittedText(owner_.padName(part), juce::Rectangle<float>(6.0f, row.getY(), kHeaderWidth - 8.0f, row.getHeight()).toNearestInt(),
+                         juce::Justification::centredLeft, 1, 0.8f);
 
         for (int s = 0; s < cols; ++s)
         {
@@ -89,7 +120,7 @@ void StepGrid::paint(juce::Graphics& g)
     for (int s = 16; s < cols; s += 16)
     {
         const auto r = cellBounds(0, s);
-        g.drawLine(r.getX(), r.getY(), r.getX(), cellBounds(kLanes - 1, s).getBottom(), 1.0f);
+        g.drawLine(r.getX(), r.getY(), r.getX(), cellBounds(rows() - 1, s).getBottom(), 1.0f);
     }
 }
 
@@ -100,7 +131,7 @@ void StepGrid::timerCallback()
     {
         // Pick up changes from Generate, Mutate, Fill, Build and loaded state.
         const auto latest = owner_.currentPattern();
-        for (int l = 0; l < kLanes && !changed; ++l)
+        for (int l = 0; l < zd::kMaxParts && !changed; ++l)
         {
             const auto& a = latest.lanes[static_cast<std::size_t>(l)];
             const auto& b = pattern_.lanes[static_cast<std::size_t>(l)];

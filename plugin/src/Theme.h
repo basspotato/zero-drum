@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 #include <juce_gui_basics/juce_gui_basics.h>
 
 /// Zero Drum's own palette: near-black panels, one colour per lane.
@@ -17,7 +19,12 @@ inline juce::Colour laneColour(int lane)
 {
     static const juce::Colour colours[] { juce::Colour(0xffff7a2f), juce::Colour(0xff3a8bff), juce::Colour(0xff2fd1c1),
                                           juce::Colour(0xffb36bff), juce::Colour(0xffff3d5a) };
-    return lane >= 0 && lane < 5 ? colours[lane] : juce::Colour(0xff5a5e6b);
+    if (lane >= 0 && lane < 5)
+        return colours[lane];
+    // Pads 6..16: hues spread between the kit colours, a little softer so the kit stays on top.
+    if (lane >= 5 && lane < 16)
+        return juce::Colour::fromHSV(std::fmod(0.11f + 0.0909f * static_cast<float>(lane - 5), 1.0f), 0.55f, 0.85f, 1.0f);
+    return juce::Colour(0xff5a5e6b);
 }
 
 } // namespace zdui

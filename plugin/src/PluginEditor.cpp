@@ -56,36 +56,49 @@ PartPanel::PartPanel(ZeroDrumProcessor& owner) : owner_(owner)
         addAndMakeVisible(k.caption);
     }
     addAndMakeVisible(crush_);
+    addChildComponent(load_);
+    addChildComponent(clear_);
+    load_.onClick = [this] { if (onLoad) onLoad(part_); };
+    clear_.onClick = [this] { if (onClear) onClear(part_); };
     showPart(0);
 }
 
 void PartPanel::showPart(int part)
 {
     part_ = part;
-    const bool hasControls = part < ZeroDrumProcessor::kNumStripParts;
+    const bool strip = part < ZeroDrumProcessor::kNumStripParts;
+    const bool samplePad = ZeroDrumProcessor::isSamplePad(part);
+    const bool loaded = owner_.padHasSample(part);
+    const bool knobsOn = strip || loaded;
     const juce::String id = "p" + juce::String(part);
     for (std::size_t i = 0; i < knobs_.size(); ++i)
     {
         auto& k = knobs_[i];
         k.attachment.reset();
-        if (hasControls)
+        if (knobsOn)
         {
-            k.attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner_.state(), id + kSuffixes[i], k.slider);
+            const char* suffix = strip ? kSuffixes[i] : ZeroDrumProcessor::kPadSuffixes[i];
+            k.attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(owner_.state(), id + suffix, k.slider);
             // The attachment installs the parameter's own text function (full precision); show something readable.
             k.slider.textFromValueFunction = [](double v) {
                 return std::abs(v) >= 100.0 ? juce::String(juce::roundToInt(v)) : juce::String(v, 2);
             };
             k.slider.updateText();
+            k.caption.setText(strip ? kLabels[i] : kPadLabels[i], juce::dontSendNotification);
         }
-        k.slider.setVisible(hasControls);
-        k.caption.setVisible(hasControls);
+        k.slider.setVisible(knobsOn);
+        k.caption.setVisible(knobsOn);
         k.slider.setColour(juce::Slider::rotarySliderFillColourId, zdui::laneColour(part));
         k.slider.setColour(juce::Slider::thumbColourId, zdui::laneColour(part).brighter(0.4f));
     }
     crushAttachment_.reset();
-    if (hasControls)
+    if (strip)
         crushAttachment_ = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(owner_.state(), id + "Crush", crush_);
-    crush_.setVisible(hasControls);
+    crush_.setVisible(strip);
+    load_.setVisible(samplePad);
+    load_.setButtonText(loaded ? "Replace..." : "Load sample...");
+    clear_.setVisible(samplePad && loaded);
+    resized();
     repaint();
 }
 
@@ -95,14 +108,13 @@ void PartPanel::paint(juce::Graphics& g)
     auto top = getLocalBounds().removeFromTop(36).reduced(12, 6);
     g.setColour(zdui::laneColour(part_));
     g.setFont(juce::FontOptions(16.0f, juce::Font::bold));
-    const bool hasControls = part_ < ZeroDrumProcessor::kNumStripParts;
-    g.drawText(hasControls ? juce::String(ZeroDrumProcessor::kStripNames[part_]) : "Part " + juce::String(part_ + 1), top, juce::Justification::centredLeft);
-    if (!hasControls)
+    g.drawText(owner_.padName(part_), top, juce::Justification::centredLeft);
+    if (ZeroDrumProcessor::isSamplePad(part_) && !owner_.padHasSample(part_))
     {
         g.setColour(zdui::kDim);
         g.setFont(juce::FontOptions(13.0f));
-        g.drawFittedText("No sound on this pad yet. Parts 6 to 16 get sounds with sample loading.", getLocalBounds().reduced(16, 48),
-                         juce::Justification::topLeft, 3);
+        g.drawFittedText("Drop a WAV, AIFF or FLAC on this pad, or load one below. Its lane shows up in the step grid once it has a sound.",
+                         getLocalBounds().reduced(16, 48).removeFromTop(80), juce::Justification::topLeft, 4);
     }
 }
 
@@ -118,6 +130,10 @@ void PartPanel::resized()
         knobs_[i].slider.setBounds(r.reduced(4));
     }
     crush_.setBounds(area.getX() + 8, area.getY() + 3 * (cell + 8) + 4, cell * 2 - 16, 24);
+    const bool loaded = owner_.padHasSample(part_);
+    const int buttonsY = loaded ? area.getY() + 3 * (cell + 8) + 4 : area.getY() + 96;
+    load_.setBounds(area.getX() + 8, buttonsY, cell + 20, 26);
+    clear_.setBounds(area.getX() + cell + 36, buttonsY, cell - 44, 26);
 }
 
 ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
@@ -151,6 +167,17 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
         addAndMakeVisible(*c);
 
     pads_.onSelect = [this](int part) { partPanel_.showPart(part); };
+    pads_.onSampleChanged = [this](int part) {
+        partPanel_.showPart(part);
+        steps_.refreshLanes();
+    };
+    partPanel_.onLoad = [this](int part) { pads_.chooseSample(part); };
+    partPanel_.onClear = [this](int part) {
+        owner_.clearPadSample(part);
+        pads_.repaint();
+        partPanel_.showPart(part);
+        steps_.refreshLanes();
+    };
     padHint_.setText("Click to play, higher is louder. Shift: 16th repeat. Drag a pad out for its MIDI.", juce::dontSendNotification);
     padHint_.setColour(juce::Label::textColourId, zdui::kDim);
     padHint_.setFont(juce::FontOptions(12.0f));

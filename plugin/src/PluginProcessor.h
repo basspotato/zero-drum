@@ -5,6 +5,7 @@
 #include "zd/gen/Generator.h"
 #include "zd/gen/StyleKit.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
@@ -97,6 +98,21 @@ public:
     static constexpr const char* kStripSuffixes[kNumStripSuffixes] { "Attack", "Sustain", "FilterMode", "Cutoff", "Resonance", "StripDrive",
                                                                       "Crush", "CrushBits", "CrushRate", "CrushFilter", "VelTone", "RevSend" };
 
+    // ---- Pad samples: parts 6..16 (indices 5..15) play user samples (message thread) ----
+    static constexpr int kFirstSamplePad = kNumStripParts;
+    static constexpr int kNumPadSuffixes = 6;
+    static constexpr const char* kPadSuffixes[kNumPadSuffixes] { "SmpPitch", "SmpDecay", "SmpStart", "Level", "Pan", "RevSend" };
+    static constexpr double kMaxSampleSeconds = 30.0;
+    static bool isSamplePad(int part) noexcept { return part >= kFirstSamplePad && part < zd::kMaxParts; }
+    /// Decodes an audio file (WAV, AIFF, FLAC, Ogg, MP3 where supported) to mono and hands it to
+    /// the pad. Returns false if the pad takes no samples or the file can't be read.
+    bool loadPadSample(int part, const juce::File& file);
+    void clearPadSample(int part);
+    bool padHasSample(int part) const noexcept;
+    /// The pad's display name: the part name, the sample's file name, or "Part N".
+    juce::String padName(int part) const;
+    bool isAudioFile(const juce::String& path) const;
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     static constexpr int stripSuffixIndex(const char* suffix) noexcept
@@ -142,6 +158,13 @@ private:
     std::atomic<bool> transportRunning_ { false };
     std::atomic<bool> exporting_ { false };
     juce::ThreadPool exportPool_ { juce::ThreadPoolOptions {}.withThreadName("Zero Drum export").withNumberOfThreads(1) };
+
+    // Pad samples, message thread. The engine gets them through submitSample (lock-free).
+    juce::AudioFormatManager formats_;
+    std::array<zd::SampleDataPtr, zd::kMaxParts> padSamples_ {};
+    std::array<juce::File, zd::kMaxParts> padFiles_ {};
+    std::array<std::array<std::atomic<float>*, kNumPadSuffixes>, zd::kMaxParts> padParams_ {};
+    void applyPadSamples(zd::Engine& engine) const;
 
     // Parameter values by ID, built once so the audio thread never constructs juce::Strings.
     std::vector<std::string> paramIds_;

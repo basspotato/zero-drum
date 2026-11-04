@@ -44,14 +44,26 @@ void PadGrid::paint(juce::Graphics& g)
     for (int i = 0; i < kPads; ++i)
     {
         const auto r = padBounds(i).reduced(4.0f);
-        const auto colour = zdui::laneColour(i);
+        const bool emptyPad = ZeroDrumProcessor::isSamplePad(i) && !owner_.padHasSample(i);
+        const auto colour = emptyPad ? zdui::laneColour(-1) : zdui::laneColour(i);
         const float glow = glow_[static_cast<std::size_t>(i)];
         g.setColour(zdui::kCellOff.interpolatedWith(colour, 0.18f + 0.82f * glow));
         g.fillRoundedRectangle(r, 8.0f);
         g.setColour(i == selected_ ? zdui::kText : colour.withAlpha(0.55f));
         g.drawRoundedRectangle(r, 8.0f, i == selected_ ? 2.0f : 1.0f);
 
-        const juce::String name = i < ZeroDrumProcessor::kNumStripParts ? juce::String(ZeroDrumProcessor::kStripNames[i]) : "Part " + juce::String(i + 1);
+        if (i == dropTarget_)
+        {
+            g.setColour(zdui::kText.withAlpha(0.25f));
+            g.fillRoundedRectangle(r, 8.0f);
+        }
+        if (emptyPad)
+        {
+            g.setColour(zdui::kDim);
+            g.setFont(juce::FontOptions(11.0f));
+            g.drawText("drop a sample", r.reduced(10.0f, 8.0f).toNearestInt(), juce::Justification::centredLeft);
+        }
+        const juce::String name = owner_.padName(i);
         g.setColour(zdui::kText);
         g.setFont(juce::FontOptions(14.0f, juce::Font::bold));
         g.drawText(name, r.reduced(10.0f, 8.0f).toNearestInt(), juce::Justification::topLeft);
@@ -92,6 +104,24 @@ void PadGrid::mouseDown(const juce::MouseEvent& e)
     selected_ = pressed_;
     if (onSelect)
         onSelect(selected_);
+    if (e.mods.isPopupMenu())
+    {
+        const int part = pressed_;
+        pressed_ = -1;
+        if (!ZeroDrumProcessor::isSamplePad(part))
+            return;
+        juce::PopupMenu menu;
+        menu.addItem("Load sample...", [this, part] { chooseSample(part); });
+        menu.addItem("Clear pad", owner_.padHasSample(part), false, [this, part] {
+            owner_.clearPadSample(part);
+            if (onSampleChanged)
+                onSampleChanged(part);
+            repaint();
+        });
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withMousePosition());
+        repaint();
+        return;
+    }
     const float velocity = velocityAt(pressed_, e.position);
     if (e.mods.isShiftDown())
     {
@@ -106,7 +136,9 @@ void PadGrid::mouseDown(const juce::MouseEvent& e)
 void PadGrid::mouseDrag(const juce::MouseEvent& e)
 {
     // Dragging a pad out of the grid drops its lane into the DAW as MIDI.
-    if (pressed_ < 0 || dragging_ || getLocalBounds().contains(e.getPosition()) || pressed_ >= ZeroDrumProcessor::kNumStripParts)
+    if (pressed_ < 0 || dragging_ || getLocalBounds().contains(e.getPosition()))
+        return;
+    if (pressed_ >= ZeroDrumProcessor::kNumStripParts && !owner_.padHasSample(pressed_))
         return;
     if (repeating_)
     {
@@ -130,4 +162,57 @@ void PadGrid::mouseUp(const juce::MouseEvent&)
         owner_.setNoteRepeat(-1, 1.0f);
     repeating_ = false;
     pressed_ = -1;
+}
+
+bool PadGrid::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    return files.size() == 1 && owner_.isAudioFile(files[0]);
+}
+
+void PadGrid::fileDragMove(const juce::StringArray&, int x, int y)
+{
+    const int pad = padAt({ static_cast<float>(x), static_cast<float>(y) });
+    const int target = ZeroDrumProcessor::isSamplePad(pad) ? pad : -1;
+    if (target != dropTarget_)
+    {
+        dropTarget_ = target;
+        repaint();
+    }
+}
+
+void PadGrid::fileDragExit(const juce::StringArray&)
+{
+    dropTarget_ = -1;
+    repaint();
+}
+
+void PadGrid::filesDropped(const juce::StringArray& files, int x, int y)
+{
+    dropTarget_ = -1;
+    const int pad = padAt({ static_cast<float>(x), static_cast<float>(y) });
+    if (files.size() == 1 && ZeroDrumProcessor::isSamplePad(pad) && owner_.loadPadSample(pad, juce::File(files[0])))
+    {
+        selected_ = pad;
+        if (onSelect)
+            onSelect(pad);
+        if (onSampleChanged)
+            onSampleChanged(pad);
+    }
+    repaint();
+}
+
+void PadGrid::chooseSample(int part)
+{
+    chooser_ = std::make_unique<juce::FileChooser>("Load a sample onto pad " + juce::String(part + 1),
+                                                   juce::File::getSpecialLocation(juce::File::userMusicDirectory),
+                                                   "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3");
+    juce::Component::SafePointer<PadGrid> self(this);
+    chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [self, part](const juce::FileChooser& fc) {
+                              if (self == nullptr || fc.getResult() == juce::File {})
+                                  return;
+                              if (self->owner_.loadPadSample(part, fc.getResult()) && self->onSampleChanged)
+                                  self->onSampleChanged(part);
+                              self->repaint();
+                          });
 }

@@ -44,6 +44,8 @@ class PartPanel final : public juce::Component
 public:
     explicit PartPanel(ZeroDrumProcessor& owner);
     void showPart(int part);
+    /// Load / Clear for sample pads; the editor wires these to the pad grid.
+    std::function<void(int)> onLoad, onClear;
     void paint(juce::Graphics&) override;
     void resized() override;
 
@@ -57,10 +59,12 @@ private:
     static constexpr int kKnobs = 6;
     static constexpr const char* kSuffixes[kKnobs] { "Attack", "Sustain", "Cutoff", "StripDrive", "VelTone", "RevSend" };
     static constexpr const char* kLabels[kKnobs] { "Attack", "Sustain", "Cutoff", "Drive", "Vel > Tone", "Reverb" };
+    static constexpr const char* kPadLabels[kKnobs] { "Pitch", "Decay", "Start", "Level", "Pan", "Reverb" };
     ZeroDrumProcessor& owner_;
     int part_ = 0;
     std::array<Knob, kKnobs> knobs_;
     juce::ToggleButton crush_ { "Crush" };
+    juce::TextButton load_ { "Load sample..." }, clear_ { "Clear" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> crushAttachment_;
 };
 

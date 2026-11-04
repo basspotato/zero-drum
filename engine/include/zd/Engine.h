@@ -134,7 +134,19 @@ public:
     Part& part(int index) noexcept { return parts_[static_cast<std::size_t>(index)]; }
     Sequencer& sequencer() noexcept { return sequencer_; }
 
+    /// Sets a part's sample while process() is not running (prepare time, offline renders).
     void setSample(int partIndex, SampleDataPtr sample);
+
+    /// Hands a sample to a part while audio runs, from one non-audio thread (the UI).
+    /// The audio thread picks it up at the start of its next block: the part's voices stop,
+    /// it plays the new sample, and its type becomes Sample (or Off for nullptr).
+    /// Lock-free and allocation-free on the audio side: the audio thread only copies a
+    /// shared_ptr, and the engine keeps the previous sample alive here so its memory is
+    /// always released on the calling thread, at the next submitSample() or
+    /// collectSamples(). Calling again before the audio thread took the last one replaces it.
+    void submitSample(int partIndex, SampleDataPtr sample) noexcept;
+    /// Releases samples the audio thread no longer uses. Same thread as submitSample().
+    void collectSamples() noexcept;
 
     /// Hands a new pattern to the audio thread from another thread (UI, generator).
     /// Lock-free and allocation-free on both sides; the audio thread picks it up at the
@@ -186,6 +198,8 @@ public:
 private:
     void renderParts(float* left, float* right, float* send, int from, int to) noexcept;
     void applyPendingPattern() noexcept;
+    void applyPendingSamples() noexcept;
+    void retireSample(int partIndex) noexcept;
 
     enum PendingState : int { Empty = 0, Writing = 1, Ready = 2, Reading = 3 };
     Pattern pendingPattern_ {};
@@ -204,6 +218,14 @@ private:
     dsp::ReverbSettings reverbSettings_ {};
     std::vector<float> send_;
     dsp::GlueCompressor glue_;
+
+    // Sample hand-off per part (see submitSample). owned_ mirrors what the audio thread's
+    // part holds, so the audio thread never drops the last reference to a sample.
+    enum SampleSlot : int { SlotIdle = 0, SlotWriting = 1, SlotReady = 2, SlotTaking = 3 };
+    std::array<std::atomic<int>, kMaxParts> sampleSlot_ {};
+    std::array<SampleDataPtr, kMaxParts> stagedSample_ {};
+    std::array<SampleDataPtr, kMaxParts> ownedSample_ {};
+    std::array<bool, kMaxParts> hasStaged_ {};
     std::atomic<float> glueReduction_ { 0.0f };
     std::array<std::atomic<std::uint32_t>, kMaxParts> hitCounts_ {};
 };

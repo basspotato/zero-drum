@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <thread>
 
 namespace zd {
 
@@ -299,9 +300,81 @@ void Engine::reset() noexcept
 
 void Engine::setSample(int partIndex, SampleDataPtr sample)
 {
-    auto& p = parts_[static_cast<std::size_t>(partIndex)];
+    const auto i = static_cast<std::size_t>(partIndex);
+    auto& p = parts_[i];
     p.reset(); // no voice may keep pointing at the old buffer
-    p.sample = std::move(sample);
+    p.sample = sample;
+    sampleSlot_[i].store(SlotIdle, std::memory_order_relaxed);
+    stagedSample_[i].reset();
+    hasStaged_[i] = false;
+    ownedSample_[i] = std::move(sample);
+}
+
+void Engine::retireSample(int partIndex) noexcept
+{
+    // Only called once the audio thread has taken the staged sample: the part now holds it,
+    // so the previously owned one can go (freed here, on the caller's thread).
+    const auto i = static_cast<std::size_t>(partIndex);
+    if (hasStaged_[i])
+    {
+        ownedSample_[i] = std::move(stagedSample_[i]);
+        stagedSample_[i].reset();
+        hasStaged_[i] = false;
+    }
+}
+
+void Engine::submitSample(int partIndex, SampleDataPtr sample) noexcept
+{
+    if (partIndex < 0 || partIndex >= kMaxParts)
+        return;
+    const auto i = static_cast<std::size_t>(partIndex);
+    auto& slot = sampleSlot_[i];
+    for (;;)
+    {
+        int expected = SlotIdle;
+        if (slot.compare_exchange_weak(expected, SlotWriting, std::memory_order_acquire))
+        {
+            retireSample(partIndex); // the last hand-off (if any) was taken
+            break;
+        }
+        expected = SlotReady; // not taken yet: replace it (it never reached the audio thread)
+        if (slot.compare_exchange_weak(expected, SlotWriting, std::memory_order_acquire))
+            break;
+        std::this_thread::yield(); // the audio thread is copying it right now (a few ns)
+    }
+    stagedSample_[i] = std::move(sample);
+    hasStaged_[i] = true;
+    slot.store(SlotReady, std::memory_order_release);
+}
+
+void Engine::collectSamples() noexcept
+{
+    for (int p = 0; p < kMaxParts; ++p)
+    {
+        int expected = SlotIdle;
+        auto& slot = sampleSlot_[static_cast<std::size_t>(p)];
+        if (hasStaged_[static_cast<std::size_t>(p)] && slot.compare_exchange_strong(expected, SlotWriting, std::memory_order_acquire))
+        {
+            retireSample(p);
+            slot.store(SlotIdle, std::memory_order_release);
+        }
+    }
+}
+
+void Engine::applyPendingSamples() noexcept
+{
+    for (int p = 0; p < kMaxParts; ++p)
+    {
+        const auto i = static_cast<std::size_t>(p);
+        int expected = SlotReady;
+        if (!sampleSlot_[i].compare_exchange_strong(expected, SlotTaking, std::memory_order_acquire))
+            continue;
+        auto& part = parts_[i];
+        part.reset();
+        part.sample = stagedSample_[i]; // refcount only; ownedSample_ keeps the old one alive
+        part.type = part.sample ? EngineType::Sample : EngineType::Off;
+        sampleSlot_[i].store(SlotIdle, std::memory_order_release);
+    }
 }
 
 bool Engine::submitPattern(const Pattern& pattern) noexcept
@@ -341,6 +414,7 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
     std::fill(left, left + numSamples, 0.0f);
     std::fill(right, right + numSamples, 0.0f);
     applyPendingPattern();
+    applyPendingSamples();
 
     // Blocks larger than prepare() promised are rendered in chunks so scratch buffers suffice.
     if (numSamples > maxBlockSize_ && maxBlockSize_ > 0)
