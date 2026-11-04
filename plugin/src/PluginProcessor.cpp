@@ -124,6 +124,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
         layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "CrushRate", 1 }, n + " Crush Rate", skewed(4000.0f, 48000.0f, 20000.0f), 26040.0f,
                                                                juce::AudioParameterFloatAttributes().withLabel("Hz")));
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { id + "CrushFilter", 1 }, n + " Crush Filter", true));
+        layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "VelTone", 1 }, n + " Velocity to Tone", Range { 0.0f, 1.0f },
+                                                               i == 4 ? 0.0f : 0.4f));
     }
 
     // Beat generator
@@ -136,6 +138,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     layout.add(floatParam("genDensity", "Density", Range { 0.0f, 1.0f }, 0.5f));
     layout.add(floatParam("genComplexity", "Complexity", Range { 0.0f, 1.0f }, 0.5f));
     layout.add(floatParam("genGroove", "Groove", Range { 0.0f, 1.0f }, 1.0f));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "subCutsKick", 1 }, "808 Cuts Kick", false));
+    layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "kickCutsSub", 1 }, "Kick Cuts 808", false));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID { "genRoot", 1 }, "808 Root Note", 24, 47, 33));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "genKit", 1 }, "Load Style Kit", true));
     for (int i = 0; i < kNumStripParts; ++i)
@@ -234,7 +238,10 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
         st.crushBits = crush ? stripValue(i, "CrushBits") : 0.0f;
         st.crushRateHz = crush && rate < 47999.0f ? rate : 0.0f;
         st.crushFilter = stripValue(i, "CrushFilter") > 0.5f;
+        engine.part(i).velocityTone = stripValue(i, "VelTone");
     }
+    engine.part(4).chokes = value("subCutsKick") > 0.5f ? 1u : 0u;
+    engine.part(0).chokes = value("kickCutsSub") > 0.5f ? (1u << 4) : 0u;
 
     engine.sequencer().pattern().swing = value("swing") * 0.01;
     engine.part(4).mix.duck = value("subDuck");
@@ -536,7 +543,10 @@ void ZeroDrumProcessor::loadStyleKit(zd::gen::Style style, int rootNote, std::ui
             setParam((id + "CrushRate").c_str(), st.crushRateHz > 0.0f ? st.crushRateHz : 48000.0f);
             setParam((id + "CrushFilter").c_str(), st.crushFilter ? 1.0f : 0.0f);
         }
+        setParam((id + "VelTone").c_str(), kit.velocityTone[static_cast<std::size_t>(i)]);
     }
+    if (!keep(4))
+        setParam("subCutsKick", kit.subCutsKick ? 1.0f : 0.0f);
 }
 
 void ZeroDrumProcessor::generateBeat()

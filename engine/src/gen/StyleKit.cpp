@@ -235,6 +235,13 @@ StyleKit styleKit(Style style) noexcept
     k.percDuck = d.perc;
     k.duckRelease = d.releaseMs * 0.001f;
     k.kickInterval = r.kInterval;
+    // Ghost-note styles (the guide: boom bap, DnB, garage, hip-hop) get the full velocity to
+    // tone on the snare; everything else a lighter touch. The 808 never changes tone.
+    const bool ghosty = style == Style::BoomBap || style == Style::DrumAndBass || style == Style::UKGarage
+                     || style == Style::HipHop;
+    k.velocityTone = ghosty ? std::array<float, 5> { 0.3f, 1.0f, 0.7f, 0.6f, 0.0f }
+                            : std::array<float, 5> { 0.2f, 0.5f, 0.4f, 0.4f, 0.0f };
+    k.subCutsKick = style == Style::Trap || style == Style::Drill;
     return k;
 }
 
@@ -281,7 +288,10 @@ void applyKit(const StyleKit& kit, Engine& engine, int rootNote, std::uint32_t s
         {
             engine.part(i).strip = kit.strips[static_cast<std::size_t>(i)];
             engine.part(i).mix.gainDb = kit.levelDb[static_cast<std::size_t>(i)];
+            engine.part(i).velocityTone = kit.velocityTone[static_cast<std::size_t>(i)];
         }
+    if (!skip(4))
+        engine.part(4).chokes = kit.subCutsKick ? 1u : 0u;
 }
 
 } // namespace zd::gen

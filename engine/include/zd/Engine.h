@@ -42,6 +42,9 @@ public:
     void trigger(float velocity, int note = -1) noexcept;
     void render(float* left, float* right, int numSamples) noexcept;
     bool isActive() const noexcept;
+    /// Cuts every sounding voice with the short kill fade, unless this part was triggered
+    /// on this very sample.
+    void choke() noexcept;
     void reset() noexcept;
     /// Starts a sidechain duck now (sample-accurate: the engine calls it at the kick's offset).
     void duckTrigger() noexcept
@@ -62,6 +65,13 @@ public:
     /// clap stacked on the snare. Off = no layer. Layering the part's own type is ignored.
     EngineType layer = EngineType::Off;
     float layerGainDb = -4.0f;
+    /// Velocity to tone, 0..1: softer hits get a shorter decay and a darker tone, so ghost
+    /// notes sound like ghost notes rather than quiet copies. At 1, velocity 0.3 gives
+    /// about -40% decay and a darker body; full velocity is unchanged. The 808 ignores it.
+    float velocityTone = 0.0f;
+    /// Choke: bit i set = a hit on this part cuts part i (e.g. closed hat cuts open hat,
+    /// 808 cuts the kick's tail). Hits on the same sample never cut each other.
+    std::uint32_t chokes = 0;
     SampleDataPtr sample; ///< set only while audio is stopped (see Engine::setSample)
     StripParams strip;
     PartMix mix;
@@ -70,7 +80,7 @@ private:
     Voice& voice(int i) noexcept { return voiceOf(type, i); }
     Voice& voiceOf(EngineType t, int i) noexcept;
     int allocateVoice(EngineType t) noexcept;
-    void triggerEngine(EngineType t, float velocity, int note, bool glideFromPrevious) noexcept;
+    void triggerEngine(EngineType t, float velocity, float toneDrop, int note, bool glideFromPrevious) noexcept;
     template <typename F> void forEachVoice(F&& f) noexcept;
 
     std::array<AnalogKickVoice, kVoicesPerPart> kickVoices_;
@@ -82,6 +92,7 @@ private:
     Strip strip_;
     std::vector<float> scratch_;
     unsigned ageCounter_ = 0;
+    std::int64_t samplesSinceTrigger_ = 0;
     double lastSubHz_ = 0.0;
 
     /// Advances the duck envelope one sample and returns the gain to apply.
