@@ -47,6 +47,8 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     generate_.onClick = [this] { owner_.generateBeat(); };
     mutate_.onClick = [this] { owner_.mutateBeat(); };
     fill_.onClick = [this] { owner_.addFillToBeat(); };
+    build_.onClick = [this] { owner_.makeBuildBeat(); };
+    build_.setTooltip("A 4-bar build-up into the drop: rising snare roll, kick drops out, then a breath");
     export_.onClick = [this] { chooseExportFolder(); };
     export_.setTooltip("Save the loop as a mix WAV, a WAV per part, MIDI per part and the pattern");
 
@@ -62,7 +64,7 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     summary_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     summary_.setFont(juce::FontOptions(13.0f));
 
-    for (auto* c : std::initializer_list<juce::Component*> { &style_, &generate_, &mutate_, &fill_, &export_, &summary_, &generic_ })
+    for (auto* c : std::initializer_list<juce::Component*> { &style_, &generate_, &mutate_, &fill_, &build_, &export_, &summary_, &generic_ })
         addAndMakeVisible(*c);
 
     setResizable(true, true);
@@ -129,6 +131,8 @@ void ZeroDrumEditor::resized()
     mutate_.setBounds(top.removeFromLeft(70));
     top.removeFromLeft(4);
     fill_.setBounds(top.removeFromLeft(50));
+    top.removeFromLeft(4);
+    build_.setBounds(top.removeFromLeft(56));
     top.removeFromLeft(8);
     export_.setBounds(top.removeFromLeft(80));
 

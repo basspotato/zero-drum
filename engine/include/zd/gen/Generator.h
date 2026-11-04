@@ -68,6 +68,12 @@ void mutate(Pattern& pattern, float amount, std::uint64_t seed, std::uint32_t lo
 /// Busier last bar-quarter on snare and perc lanes, for a fill variation.
 void addFill(Pattern& pattern, float intensity, std::uint64_t seed, std::uint32_t lockMask) noexcept;
 
+/// A build-up of `bars` bars (1..4) into a drop: a snare roll that rises from 8ths to 16ths
+/// to 32nds to 64ths with a velocity ramp, a kick on the quarters that drops out for the
+/// last quarter of the build, offbeat hats, no 808 or perc, and an 8th of silence at the
+/// end before the drop. Unlocked lanes are replaced; all of them take the build's length.
+void makeBuild(Pattern& pattern, int bars, std::uint32_t lockMask) noexcept;
+
 /// Counts the active steps in one lane (within its length).
 int countHits(const Lane& lane) noexcept;
 

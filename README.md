@@ -63,6 +63,11 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
   seeded human spread, the 808 stays locked to the kick, and snare ghost notes use the style's
   ghost velocity. **Groove** 0 gives a straight grid with flat accents; 1 (default) is the full feel.
   Groove only moves timing and dynamics, never which steps play.
+- **Build**: replaces the beat with a 4-bar build-up into the drop: a snare roll rising from
+  8ths to 16ths to 32nds to 64ths with a velocity ramp, the kick dropping out for the last bar,
+  then an 8th of silence. Locked lanes stay. Drag it out as MIDI like any beat.
+- **808 slides**: in trap, drill and amapiano, about 30% of bars move the last 808 hit to a
+  fourth or fifth below the root or the octave above, so the 808 glides into it.
 - **Style kits**: with **Load Style Kit** on (the default), Generate also tunes the five parts for
   the style (kick, snare, hat, perc, 808 settings, strips and levels) and sets the 808 root to the
   style's home key. The kick is tuned to a fixed interval above the 808 root, so the two never
