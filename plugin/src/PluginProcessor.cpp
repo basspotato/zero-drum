@@ -126,6 +126,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
         layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { id + "CrushFilter", 1 }, n + " Crush Filter", true));
         layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "VelTone", 1 }, n + " Velocity to Tone", Range { 0.0f, 1.0f },
                                                                i == 4 ? 0.0f : 0.4f));
+        layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "RevSend", 1 }, n + " Reverb Send", Range { 0.0f, 1.0f }, 0.0f));
     }
 
     // Beat generator
@@ -139,6 +140,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
     layout.add(floatParam("genComplexity", "Complexity", Range { 0.0f, 1.0f }, 0.5f));
     layout.add(floatParam("genGroove", "Groove", Range { 0.0f, 1.0f }, 1.0f));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "subCutsKick", 1 }, "808 Cuts Kick", false));
+    layout.add(floatParam("revDecay", "Reverb Decay", skewed(0.2f, 6.0f, 1.2f), 1.0f, "s"));
+    layout.add(floatParam("revSize", "Reverb Size", Range { 0.0f, 1.0f }, 0.5f));
+    layout.add(floatParam("revPreDelay", "Reverb Pre-delay", Range { 0.0f, 100.0f }, 10.0f, "ms"));
+    layout.add(floatParam("revDamping", "Reverb Damping", skewed(500.0f, 20000.0f, 5000.0f), 7000.0f, "Hz"));
+    layout.add(floatParam("revHighPass", "Reverb High-pass", skewed(20.0f, 2000.0f, 300.0f), 400.0f, "Hz"));
+    layout.add(floatParam("revLevel", "Reverb Level", Range { -24.0f, 6.0f }, 0.0f, "dB"));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "kickCutsSub", 1 }, "Kick Cuts 808", false));
     layout.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID { "genRoot", 1 }, "808 Root Note", 24, 47, 33));
     layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { "genKit", 1 }, "Load Style Kit", true));
@@ -239,7 +246,16 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
         st.crushRateHz = crush && rate < 47999.0f ? rate : 0.0f;
         st.crushFilter = stripValue(i, "CrushFilter") > 0.5f;
         engine.part(i).velocityTone = stripValue(i, "VelTone");
+        engine.part(i).mix.reverbSend = stripValue(i, "RevSend");
     }
+    zd::dsp::ReverbSettings rv;
+    rv.decay = value("revDecay");
+    rv.size = value("revSize");
+    rv.preDelayMs = value("revPreDelay");
+    rv.dampingHz = value("revDamping");
+    rv.highPassHz = value("revHighPass");
+    rv.returnDb = value("revLevel");
+    engine.setReverb(rv);
     engine.part(4).chokes = value("subCutsKick") > 0.5f ? 1u : 0u;
     engine.part(0).chokes = value("kickCutsSub") > 0.5f ? (1u << 4) : 0u;
 
@@ -544,7 +560,14 @@ void ZeroDrumProcessor::loadStyleKit(zd::gen::Style style, int rootNote, std::ui
             setParam((id + "CrushFilter").c_str(), st.crushFilter ? 1.0f : 0.0f);
         }
         setParam((id + "VelTone").c_str(), kit.velocityTone[static_cast<std::size_t>(i)]);
+        setParam((id + "RevSend").c_str(), kit.reverbSend[static_cast<std::size_t>(i)]);
     }
+    setParam("revDecay", kit.reverb.decay);
+    setParam("revSize", kit.reverb.size);
+    setParam("revPreDelay", kit.reverb.preDelayMs);
+    setParam("revDamping", kit.reverb.dampingHz);
+    setParam("revHighPass", kit.reverb.highPassHz);
+    setParam("revLevel", kit.reverb.returnDb);
     if (!keep(4))
         setParam("subCutsKick", kit.subCutsKick ? 1.0f : 0.0f);
 }

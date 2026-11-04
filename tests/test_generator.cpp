@@ -317,6 +317,7 @@ TEST_CASE("Style kits: in range, tuned to the root, and every style renders with
             }
         }
         CHECK(peak > 0.1);
+        MESSAGE(std::string(styleName(style)) << " peak " << peak);
         CHECK(peak < 1.0); // under 0 dBFS before any master clipper exists
     }
     CHECK(rootTunedKickHz(29, 7, 65.4f) == doctest::Approx(65.41).epsilon(0.001)); // F1 + fifth = C2
