@@ -106,6 +106,8 @@ void Part::triggerEngine(EngineType t, float velocity, float toneDrop, int note,
         case EngineType::AnalogKick:
         {
             KickParams k = kick;
+            if (note >= 0)
+                k.tuneHz = static_cast<float>(noteToHz(note)); // melodic kick
             k.decay *= decayScale;
             k.click *= 1.0f - 0.6f * std::min(toneDrop, 1.0f);
             k.pitchAmount *= 1.0f - 0.3f * std::min(toneDrop, 1.0f);

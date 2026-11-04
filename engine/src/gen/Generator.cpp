@@ -1,6 +1,7 @@
 #include "zd/gen/Generator.h"
 
 #include "zd/dsp/Random.h"
+#include "zd/gen/StyleKit.h"
 
 #include <algorithm>
 #include <array>
@@ -388,6 +389,26 @@ void writeSub(const GenerateParams& p, const StyleDef& style, const Lane& kick, 
     }
 }
 
+/// Melodic kick (hardstyle, festival): every kick takes a note. The first half bar sits on
+/// the kick's root-tuned note; each later half bar moves with the chords of the natural
+/// minor key (VI, III, VII, iv) or stays, so the kick plays the progression.
+void writeKickMelody(const GenerateParams& p, dsp::Random& rng, Lane& kick) noexcept
+{
+    const StyleKit kit = styleKit(p.style);
+    const double hz = rootTunedKickHz(p.rootNote, kit.kickInterval, kit.kick.tuneHz);
+    const int base = static_cast<int>(std::lround(69.0 + 12.0 * std::log2(hz / 440.0)));
+    constexpr std::array<int, 6> kMoves { 0, 0, -4, 3, -2, 5 };
+    int move = 0;
+    for (int i = 0; i < kick.length; ++i)
+    {
+        if (i % (kSteps / 2) == 0)
+            move = i == 0 ? 0 : kMoves.at(static_cast<std::size_t>(rng.next() % kMoves.size()));
+        Step& s = kick.steps[static_cast<std::size_t>(i)];
+        if (s.on)
+            s.note = base + move;
+    }
+}
+
 } // namespace
 
 std::string_view styleName(Style style) noexcept { return def(style).name; }
@@ -420,6 +441,8 @@ void generate(const GenerateParams& p, Pattern& pattern) noexcept
             writeSub(p, style, pattern.lanes[Kick], laneRng, lane);
         else
             writeLane(style.lanes[static_cast<std::size_t>(role)], static_cast<Role>(role), p, style, laneRng, lane);
+        if (role == Kick && (p.style == Style::Hardstyle || p.style == Style::Festival))
+            writeKickMelody(p, laneRng, lane);
     }
 }
 

@@ -75,6 +75,7 @@ public:
     static int noteToPart(int note) noexcept;
 
     static constexpr int kSubMidiChannel = 2;
+    static constexpr int kKickMidiChannel = 3; ///< plays the kick melodically
     static constexpr int kNumStripParts = 5;
     static constexpr int kNumStripSuffixes = 12;
     static constexpr const char* kStripNames[kNumStripParts] { "Kick", "Snare", "Hat", "Perc", "808" };

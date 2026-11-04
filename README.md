@@ -53,7 +53,8 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
 - Press play in the host: the default pattern follows the host tempo and position.
 - In the standalone app (no host transport), turn on **Free Run**.
 - MIDI: note 36 = kick, 38 = snare, 42 = hat; notes 36 to 51 map to parts 0 to 15.
-- MIDI channel 2 plays the 808 melodically (with glide between overlapping notes).
+- MIDI channel 2 plays the 808 melodically (with glide between overlapping notes); channel 3
+  plays the kick melodically.
 - Default kit: kick (part 0), snare (1), hat (2), FM perc (3), 808 (4).
 - Generator bar: pick a style, then **Generate** (new beat), **Mutate** (small changes), **Fill**.
   Lock parameters keep a lane while you regenerate the rest. The beat is saved with the project.
@@ -63,6 +64,9 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
   seeded human spread, the 808 stays locked to the kick, and snare ghost notes use the style's
   ghost velocity. **Groove** 0 gives a straight grid with flat accents; 1 (default) is the full feel.
   Groove only moves timing and dynamics, never which steps play.
+- **Melodic kick** (hardstyle, festival): the generator gives every kick a note that follows the
+  minor key's chords, and the kit adds **Kick Drive 2** after a mid bell (**Kick Mid Freq**,
+  **Kick Mid Gain**) for the screech. Drag-MIDI and Export put the kick line on channel 3.
 - **Build**: replaces the beat with a 4-bar build-up into the drop: a snare roll rising from
   8ths to 16ths to 32nds to 64ths with a velocity ramp, the kick dropping out for the last bar,
   then an 8th of silence. Locked lanes stay. Drag it out as MIDI like any beat.
