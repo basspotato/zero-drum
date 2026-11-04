@@ -13,6 +13,13 @@ Design doc: https://claude.ai/artifact/5MaVGW6f8HcNhZeR3Swyj4. Scope is v1 + v2;
 - New nonlinear stages use ADAA (`zd/dsp/Adaa.h`) or oversampling, with an aliasing test.
 - Dependencies are pinned in `cmake/Dependencies.cmake`; third-party code must be permissively licensed.
 
+## Git and pushing
+
+- Batch a lot of work locally before any push: commit on local branches, many features per push.
+- Always ask Basspotato before pushing to the repo, and wait for a yes. That covers `git push`,
+  opening or updating a pull request, and re-running CI.
+- Until then, keep work safe outside the container (for example as patch files).
+
 ## Checks before pushing
 
 ```sh
