@@ -603,6 +603,17 @@ void ZeroDrumProcessor::addFillToBeat()
     publishPattern(next);
 }
 
+void ZeroDrumProcessor::makeBuildBeat()
+{
+    zd::Pattern next;
+    {
+        const std::lock_guard<std::mutex> lock(patternMutex_);
+        zd::gen::makeBuild(uiPattern_, 4, lockMask());
+        next = uiPattern_;
+    }
+    publishPattern(next);
+}
+
 juce::String ZeroDrumProcessor::describeBeat() const
 {
     const std::lock_guard<std::mutex> lock(patternMutex_);

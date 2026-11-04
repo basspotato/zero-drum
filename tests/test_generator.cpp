@@ -411,3 +411,76 @@ TEST_CASE("Groove: house accents the offbeat hat, trap accents the downbeat")
     CHECK(houseOff > houseOn * 1.2);
     CHECK(trapOn > trapOff * 1.05);
 }
+
+TEST_CASE("Generator: trap 808 slides land on the bar's last hit, about 30% of bars")
+{
+    int bars = 0, slides = 0;
+    for (std::uint64_t seed = 1; seed <= 200; ++seed)
+    {
+        GenerateParams p;
+        p.style = Style::Trap;
+        p.seed = seed;
+        p.rootNote = 33;
+        Pattern pat;
+        generate(p, pat);
+        const Lane& sub = pat.lanes[Sub];
+        for (int bar = 0; bar < 2; ++bar)
+        {
+            int last = -1, hits = 0;
+            for (int i = bar * 16; i < bar * 16 + 16; ++i)
+                if (sub.steps[static_cast<std::size_t>(i)].on)
+                {
+                    last = i;
+                    ++hits;
+                }
+            if (hits < 2)
+                continue;
+            ++bars;
+            const int n = sub.steps[static_cast<std::size_t>(last)].note;
+            if (n == 33 - 5 || n == 33 - 7 || n == 33 + 12)
+                ++slides;
+        }
+    }
+    const double share = static_cast<double>(slides) / bars;
+    MESSAGE("slide share " << share);
+    CHECK(share > 0.25);
+    CHECK(share < 0.55);
+}
+
+TEST_CASE("Builds: the snare roll rises 8ths -> 16ths -> 32nds -> 64ths with a ramp, then a breath")
+{
+    Pattern pat;
+    loadDefaultPattern(pat);
+    const Lane lockedHat = pat.lanes[Hat];
+    makeBuild(pat, 4, 1u << Hat);
+
+    const Lane& sn = pat.lanes[Snare];
+    REQUIRE(sn.length == 64);
+    CHECK(pat.lanes[Kick].length == 64);
+    CHECK(lanesEqual(pat.lanes[Hat], lockedHat)); // locked lane untouched
+    for (int i = 0; i < 16; ++i)
+        CHECK(sn.steps[static_cast<std::size_t>(i)].on == (i % 2 == 0));
+    for (int i = 16; i < 32; ++i)
+        CHECK((sn.steps[static_cast<std::size_t>(i)].on && sn.steps[static_cast<std::size_t>(i)].ratchet == 1));
+    for (int i = 32; i < 48; ++i)
+        CHECK(sn.steps[static_cast<std::size_t>(i)].ratchet == 2);
+    for (int i = 48; i < 62; ++i)
+        CHECK(sn.steps[static_cast<std::size_t>(i)].ratchet == kMaxRatchet);
+    float last = 0.0f;
+    for (int i = 0; i < 62; ++i)
+        if (sn.steps[static_cast<std::size_t>(i)].on)
+        {
+            CHECK(sn.steps[static_cast<std::size_t>(i)].velocity >= last);
+            last = sn.steps[static_cast<std::size_t>(i)].velocity;
+        }
+    CHECK(last == doctest::Approx(1.0f));
+    // The breath: nothing plays on the last 8th; the kick sits out the last quarter.
+    for (int l = 0; l < kNumRoles; ++l)
+        if (l != Hat)
+            for (int i = 62; i < 64; ++i)
+                CHECK_FALSE(pat.lanes[static_cast<std::size_t>(l)].steps[static_cast<std::size_t>(i)].on);
+    for (int i = 48; i < 64; ++i)
+        CHECK_FALSE(pat.lanes[Kick].steps[static_cast<std::size_t>(i)].on);
+    CHECK(countHits(pat.lanes[Sub]) == 0);
+    CHECK(countHits(pat.lanes[Perc]) == 0);
+}

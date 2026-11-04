@@ -364,6 +364,28 @@ void writeSub(const GenerateParams& p, const StyleDef& style, const Lane& kick, 
         const int octave = (degree >= 3 && rng.uniform() < 0.3) ? -12 : 0;
         s.note = p.rootNote + kMinorPentatonic.at(static_cast<std::size_t>(degree)) + octave;
     }
+
+    // Deliberate slides (the guide): in trap, drill and amapiano, about 30% of bars move the
+    // bar's last 808 hit to a fourth or fifth below the root or the octave above. The 808 is
+    // mono with glide, so it slides there from the note still ringing.
+    if (p.style == Style::Trap || p.style == Style::Drill || p.style == Style::Amapiano)
+    {
+        constexpr std::array<int, 3> kSlides { -5, -7, 12 };
+        for (int bar = 0; bar * kSteps < sub.length; ++bar)
+        {
+            int last = -1, hits = 0;
+            for (int i = bar * kSteps; i < std::min(sub.length, (bar + 1) * kSteps); ++i)
+                if (sub.steps[static_cast<std::size_t>(i)].on)
+                {
+                    last = i;
+                    ++hits;
+                }
+            const double draw = rng.uniform();
+            const auto pick = static_cast<std::size_t>(rng.next() % kSlides.size());
+            if (hits >= 2 && last % kSteps != 0 && draw < 0.3)
+                sub.steps[static_cast<std::size_t>(last)].note = p.rootNote + kSlides.at(pick);
+        }
+    }
 }
 
 } // namespace
@@ -465,6 +487,46 @@ void addFill(Pattern& pattern, float intensity, std::uint64_t seed, std::uint32_
                 s = Step { true, static_cast<float>(0.55 + 0.4 * (i - (end - 4)) / 3.0), 1.0f, 0.0f, -1, 1 };
             if (s.on && lane == Snare && rng.uniform() < 0.4 * k)
                 s.ratchet = 2;
+        }
+    }
+}
+
+void makeBuild(Pattern& pattern, int bars, std::uint32_t lockMask) noexcept
+{
+    const int n = std::clamp(bars, 1, kMaxStepsPerLane / kSteps) * kSteps;
+    const int breath = n >= 2 * kSteps ? 2 : 0; // an 8th of silence before the drop
+    for (int role = 0; role < kNumRoles; ++role)
+    {
+        if (locked(lockMask, role))
+            continue;
+        Lane& lane = pattern.lanes[static_cast<std::size_t>(role)];
+        lane = Lane {};
+        lane.length = n;
+        for (int i = 0; i < n - breath; ++i)
+        {
+            const int segment = i * 4 / n; // 0..3: 8ths, 16ths, 32nds, 64ths
+            const float ramp = static_cast<float>(i) / static_cast<float>(std::max(1, n - breath - 1));
+            Step& st = lane.steps[static_cast<std::size_t>(i)];
+            switch (role)
+            {
+                case Snare:
+                    if (segment > 0 || i % 2 == 0)
+                    {
+                        st.on = true;
+                        st.velocity = 0.35f + 0.65f * ramp;
+                        st.ratchet = segment == 2 ? 2 : segment == 3 ? kMaxRatchet : 1;
+                    }
+                    break;
+                case Kick:
+                    if (segment < 3 && i % 4 == 0)
+                        st = Step { true, 0.95f, 1.0f, 0.0f, -1, 1 };
+                    break;
+                case Hat:
+                    if (i % 4 == 2)
+                        st = Step { true, 0.5f + 0.3f * ramp, 1.0f, 0.0f, -1, 1 };
+                    break;
+                default: break; // perc and 808 rest until the drop
+            }
         }
     }
 }

@@ -54,6 +54,8 @@ public:
     void generateBeat();
     void mutateBeat();
     void addFillToBeat();
+    /// Replaces the unlocked lanes with a 4-bar build-up into the drop.
+    void makeBuildBeat();
     juce::String describeBeat() const;
 
     /// Export, called from the message thread. Renders on a background thread with its own

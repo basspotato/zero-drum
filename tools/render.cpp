@@ -1,5 +1,5 @@
 // zd_render: renders the default kit and pattern to a WAV file, offline and without JUCE.
-// Usage: zd_render [out.wav] [bars=4] [bpm=120] [sampleRate=48000] [seed=1] [style] [groove=1]
+// Usage: zd_render [out.wav] [bars=4] [bpm=120] [sampleRate=48000] [seed=1] [style] [groove=1] [buildBars=0]
 // With a style (0..16, see zd::gen::Style) the beat is generated on that style's tuned kit;
 // bpm 0 picks the style's tempo.
 // If out ends in '/', it is a folder and the loop is exported there instead: mix.wav,
@@ -81,6 +81,8 @@ int main(int argc, char** argv)
         p.rootNote = kit.rootNote;
         zd::gen::applyKit(kit, *engine, kit.rootNote);
         zd::gen::generate(p, engine->sequencer().pattern());
+        if (argc > 8 && std::atoi(argv[8]) > 0)
+            zd::gen::makeBuild(engine->sequencer().pattern(), std::atoi(argv[8]), 0);
         if (bpm <= 0.0)
         {
             const auto range = zd::gen::styleTempo(p.style);

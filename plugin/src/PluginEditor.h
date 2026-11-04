@@ -38,7 +38,7 @@ private:
     ZeroDrumProcessor& owner_;
     juce::ComboBox style_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> styleAttachment_;
-    juce::TextButton generate_ { "Generate" }, mutate_ { "Mutate" }, fill_ { "Fill" };
+    juce::TextButton generate_ { "Generate" }, mutate_ { "Mutate" }, fill_ { "Fill" }, build_ { "Build" };
     juce::TextButton export_ { "Export..." };
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::Label dragLabel_ { {}, "Drag MIDI:" };
