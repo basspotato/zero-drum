@@ -150,6 +150,8 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     build_.setTooltip("A 4-bar build-up into the drop: rising snare roll, kick drops out, then a breath");
     export_.onClick = [this] { chooseExportFolder(); };
     export_.setTooltip("Save the loop as a mix WAV, a WAV per part, MIDI per part and the pattern");
+    kit_.onClick = [this] { showKitMenu(); };
+    kit_.setTooltip("Save or load the whole kit: every sound, the bus and the pattern");
 
     dragLabel_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     dragLabel_.setFont(juce::FontOptions(12.0f));
@@ -163,7 +165,7 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
     summary_.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
     summary_.setFont(juce::FontOptions(13.0f));
 
-    for (auto* c : std::initializer_list<juce::Component*> { &style_, &generate_, &mutate_, &fill_, &build_, &export_, &summary_ })
+    for (auto* c : std::initializer_list<juce::Component*> { &style_, &generate_, &mutate_, &fill_, &build_, &export_, &kit_, &summary_ })
         addAndMakeVisible(*c);
 
     pads_.onSelect = [this](int part) { partPanel_.showPart(part); };
@@ -209,6 +211,44 @@ ZeroDrumEditor::ZeroDrumEditor(ZeroDrumProcessor& owner)
 void ZeroDrumEditor::timerCallback()
 {
     summary_.setText(owner_.describeBeat(), juce::dontSendNotification);
+}
+
+void ZeroDrumEditor::showKitMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem("Save kit...", [this] { chooseKitFile(true); });
+    menu.addItem("Load kit...", [this] { chooseKitFile(false); });
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&kit_));
+}
+
+void ZeroDrumEditor::chooseKitFile(bool save)
+{
+    const auto dir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Zero Drum").getChildFile("Kits");
+    dir.createDirectory();
+    chooser_ = std::make_unique<juce::FileChooser>(save ? "Save the kit" : "Load a kit",
+                                                   save ? dir.getChildFile(juce::String("My kit") + ZeroDrumProcessor::kKitExtension) : dir,
+                                                   juce::String("*") + ZeroDrumProcessor::kKitExtension);
+    const int mode = save ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting
+                           : juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+    juce::Component::SafePointer<ZeroDrumEditor> self(this);
+    chooser_->launchAsync(mode, [self, save](const juce::FileChooser& fc) {
+        auto file = fc.getResult();
+        if (self == nullptr || file == juce::File {})
+            return;
+        if (save)
+        {
+            if (!file.hasFileExtension(ZeroDrumProcessor::kKitExtension))
+                file = file.withFileExtension(ZeroDrumProcessor::kKitExtension);
+            self->owner_.saveKit(file);
+            return;
+        }
+        if (self->owner_.loadKit(file))
+        {
+            self->steps_.refreshLanes();
+            self->pads_.repaint();
+            self->partPanel_.showPart(self->pads_.selectedPart());
+        }
+    });
 }
 
 void ZeroDrumEditor::chooseExportFolder()
@@ -268,6 +308,8 @@ void ZeroDrumEditor::resized()
     build_.setBounds(top.removeFromLeft(56));
     top.removeFromLeft(8);
     export_.setBounds(top.removeFromLeft(80));
+    top.removeFromLeft(4);
+    kit_.setBounds(top.removeFromLeft(44));
 
     auto drag = area.removeFromTop(30).reduced(8, 3);
     dragLabel_.setBounds(drag.removeFromLeft(72));

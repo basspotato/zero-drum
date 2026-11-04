@@ -114,6 +114,22 @@ public:
     juce::String padName(int part) const;
     bool isAudioFile(const juce::String& path) const;
 
+    // ---- Part and kit files (message thread) ----
+    /// A part file (.zdpart) holds one part's sound, mix and lane; a kit file (.zdkit) holds the
+    /// whole instrument (every part, the bus and the pattern), the same as a saved session.
+    static constexpr const char* kPartExtension = ".zdpart";
+    static constexpr const char* kKitExtension = ".zdkit";
+    /// Which part a parameter belongs to, or -1 for the bus and generator settings.
+    static int partOfParam(const juce::String& id) noexcept;
+    juce::ValueTree partToTree(int part) const;
+    /// Loads a part file's tree into `part`. Kit parts 1..5 load only into their own slot;
+    /// a pad (6..16) loads into any pad. With `withLane`, the lane replaces the pattern's.
+    bool partFromTree(int part, const juce::ValueTree& tree, bool withLane);
+    bool savePart(int part, const juce::File& file) const;
+    bool loadPart(int part, const juce::File& file, bool withLane = true);
+    bool saveKit(const juce::File& file);
+    bool loadKit(const juce::File& file);
+
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     static constexpr int stripSuffixIndex(const char* suffix) noexcept

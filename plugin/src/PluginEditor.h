@@ -78,12 +78,15 @@ public:
 private:
     void timerCallback() override;
     void chooseExportFolder();
+    void showKitMenu();
+    void chooseKitFile(bool save);
 
     ZeroDrumProcessor& owner_;
     juce::ComboBox style_;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> styleAttachment_;
     juce::TextButton generate_ { "Generate" }, mutate_ { "Mutate" }, fill_ { "Fill" }, build_ { "Build" };
     juce::TextButton export_ { "Export..." };
+    juce::TextButton kit_ { "Kit" };
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::Label dragLabel_ { {}, "Drag MIDI:" };
     std::vector<std::unique_ptr<MidiDragChip>> chips_;

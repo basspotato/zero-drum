@@ -30,6 +30,8 @@ public:
 
     /// Opens a file chooser for the pad's sample.
     void chooseSample(int part);
+    /// Saves or loads the pad's part file (.zdpart).
+    void choosePartFile(int part, bool save);
     /// Called after a pad's sample changes (the part panel refreshes its title).
     std::function<void(int)> onSampleChanged;
 

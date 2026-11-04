@@ -41,7 +41,7 @@ target_link_libraries(ZeroDrum
 # Plugin-level tests (the JUCE shell, headless). Built with the engine tests.
 if(ZD_BUILD_TESTS)
     juce_add_console_app(zd_plugin_tests PRODUCT_NAME "zd_plugin_tests")
-    target_sources(zd_plugin_tests PRIVATE tests/test_midi_out.cpp)
+    target_sources(zd_plugin_tests PRIVATE tests/test_midi_out.cpp tests/test_parts.cpp)
     target_include_directories(zd_plugin_tests PRIVATE src)
     target_compile_definitions(zd_plugin_tests PRIVATE
         JUCE_WEB_BROWSER=0

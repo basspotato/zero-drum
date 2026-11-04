@@ -618,6 +618,127 @@ bool ZeroDrumProcessor::padHasSample(int part) const noexcept
     return isSamplePad(part) && padSamples_[static_cast<std::size_t>(part)] != nullptr;
 }
 
+// ------------------------------------------------------------------------ part and kit files
+
+int ZeroDrumProcessor::partOfParam(const juce::String& id) noexcept
+{
+    // Per-part strip and pad parameters: "p<index><Suffix>", e.g. p3Cutoff, p12Level.
+    if (id.startsWithChar('p') && id.length() > 2 && juce::CharacterFunctions::isDigit(id[1]))
+    {
+        int i = 1, index = 0;
+        while (i < id.length() && juce::CharacterFunctions::isDigit(id[i]))
+            index = index * 10 + (id[i++] - '0');
+        if (i < id.length() && juce::CharacterFunctions::isUpperCase(id[i]) && index < zd::kMaxParts)
+            return index;
+        return -1;
+    }
+    if (id.startsWith("lock"))
+        return -1; // generator locks are about the session, not the sound
+    if (id.startsWith("kick"))
+        return 0; // kickCutsSub too: what the kick does to the 808
+    if (id.startsWith("snare") || id.startsWith("clap"))
+        return 1;
+    if (id.startsWith("hat"))
+        return 2;
+    if (id.startsWith("fm") || id == "percDuck")
+        return 3;
+    if (id.startsWith("sub"))
+        return 4; // subDuck and subCutsKick too
+    return -1;
+}
+
+juce::ValueTree ZeroDrumProcessor::partToTree(int part) const
+{
+    juce::ValueTree tree("ZeroDrumPart");
+    tree.setProperty("version", 1, nullptr);
+    tree.setProperty("part", part, nullptr);
+    tree.setProperty("name", padName(part), nullptr);
+    for (const auto& idStd : paramIds_)
+    {
+        const juce::String id(idStd);
+        if (partOfParam(id) != part)
+            continue;
+        if (auto* param = apvts_.getParameter(id))
+        {
+            juce::ValueTree p("param");
+            // Pad parameters are stored without their index, so a pad file fits any pad.
+            p.setProperty("id", isSamplePad(part) ? id.substring(1 + juce::String(part).length()) : id, nullptr);
+            p.setProperty("value", param->convertFrom0to1(param->getValue()), nullptr);
+            tree.appendChild(p, nullptr);
+        }
+    }
+    if (padHasSample(part))
+        tree.setProperty("sample", padFiles_[static_cast<std::size_t>(part)].getFullPathName(), nullptr);
+    zd::Pattern lane {};
+    lane.lanes[0] = currentPattern().lanes[static_cast<std::size_t>(part)];
+    tree.setProperty("lane", juce::String(zd::serializePattern(lane)), nullptr);
+    return tree;
+}
+
+bool ZeroDrumProcessor::partFromTree(int part, const juce::ValueTree& tree, bool withLane)
+{
+    if (!tree.hasType("ZeroDrumPart") || part < 0 || part >= zd::kMaxParts)
+        return false;
+    const int from = tree.getProperty("part", -1);
+    const bool padFile = isSamplePad(from);
+    if (padFile ? !isSamplePad(part) : from != part)
+        return false; // a kick file only fits the kick, a pad file any pad
+    for (const auto& p : tree)
+    {
+        if (!p.hasType("param"))
+            continue;
+        const juce::String stored = p.getProperty("id").toString();
+        const juce::String id = padFile ? "p" + juce::String(part) + stored : stored;
+        if (partOfParam(id) == part)
+            setParam(id.toRawUTF8(), static_cast<float>(p.getProperty("value")));
+    }
+    if (padFile)
+    {
+        const juce::String path = tree.getProperty("sample").toString();
+        const juce::File file = path.isNotEmpty() && juce::File::isAbsolutePath(path) ? juce::File(path) : juce::File {};
+        if (!file.existsAsFile() || !loadPadSample(part, file))
+            clearPadSample(part);
+    }
+    zd::Pattern lane;
+    if (withLane && zd::deserializePattern(tree.getProperty("lane").toString().toStdString(), lane))
+        editPattern([part, l = lane.lanes[0]](zd::Pattern& pat) { pat.lanes[static_cast<std::size_t>(part)] = l; });
+    return true;
+}
+
+bool ZeroDrumProcessor::savePart(int part, const juce::File& file) const
+{
+    if (auto xml = partToTree(part).createXml())
+        return xml->writeTo(file);
+    return false;
+}
+
+bool ZeroDrumProcessor::loadPart(int part, const juce::File& file, bool withLane)
+{
+    if (auto xml = juce::parseXML(file))
+        return partFromTree(part, juce::ValueTree::fromXml(*xml), withLane);
+    return false;
+}
+
+bool ZeroDrumProcessor::saveKit(const juce::File& file)
+{
+    juce::MemoryBlock data;
+    getStateInformation(data);
+    if (auto xml = getXmlFromBinary(data.getData(), static_cast<int>(data.getSize())))
+        return xml->writeTo(file);
+    return false;
+}
+
+bool ZeroDrumProcessor::loadKit(const juce::File& file)
+{
+    auto xml = juce::parseXML(file);
+    if (xml == nullptr || !xml->hasTagName(apvts_.state.getType()))
+        return false;
+    juce::MemoryBlock data;
+    copyXmlToBinary(*xml, data);
+    setStateInformation(data.getData(), static_cast<int>(data.getSize()));
+    return true;
+}
+
 juce::String ZeroDrumProcessor::padName(int part) const
 {
     if (part >= 0 && part < kNumStripParts)

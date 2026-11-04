@@ -108,16 +108,20 @@ void PadGrid::mouseDown(const juce::MouseEvent& e)
     {
         const int part = pressed_;
         pressed_ = -1;
-        if (!ZeroDrumProcessor::isSamplePad(part))
-            return;
         juce::PopupMenu menu;
-        menu.addItem("Load sample...", [this, part] { chooseSample(part); });
-        menu.addItem("Clear pad", owner_.padHasSample(part), false, [this, part] {
-            owner_.clearPadSample(part);
-            if (onSampleChanged)
-                onSampleChanged(part);
-            repaint();
-        });
+        if (ZeroDrumProcessor::isSamplePad(part))
+        {
+            menu.addItem("Load sample...", [this, part] { chooseSample(part); });
+            menu.addItem("Clear pad", owner_.padHasSample(part), false, [this, part] {
+                owner_.clearPadSample(part);
+                if (onSampleChanged)
+                    onSampleChanged(part);
+                repaint();
+            });
+            menu.addSeparator();
+        }
+        menu.addItem("Save part...", [this, part] { choosePartFile(part, true); });
+        menu.addItem("Load part...", [this, part] { choosePartFile(part, false); });
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this).withMousePosition());
         repaint();
         return;
@@ -166,13 +170,15 @@ void PadGrid::mouseUp(const juce::MouseEvent&)
 
 bool PadGrid::isInterestedInFileDrag(const juce::StringArray& files)
 {
-    return files.size() == 1 && owner_.isAudioFile(files[0]);
+    return files.size() == 1
+        && (owner_.isAudioFile(files[0]) || juce::File(files[0]).hasFileExtension(ZeroDrumProcessor::kPartExtension));
 }
 
-void PadGrid::fileDragMove(const juce::StringArray&, int x, int y)
+void PadGrid::fileDragMove(const juce::StringArray& files, int x, int y)
 {
     const int pad = padAt({ static_cast<float>(x), static_cast<float>(y) });
-    const int target = ZeroDrumProcessor::isSamplePad(pad) ? pad : -1;
+    const bool partFile = files.size() == 1 && juce::File(files[0]).hasFileExtension(ZeroDrumProcessor::kPartExtension);
+    const int target = (partFile && pad >= 0) || ZeroDrumProcessor::isSamplePad(pad) ? pad : -1;
     if (target != dropTarget_)
     {
         dropTarget_ = target;
@@ -190,7 +196,11 @@ void PadGrid::filesDropped(const juce::StringArray& files, int x, int y)
 {
     dropTarget_ = -1;
     const int pad = padAt({ static_cast<float>(x), static_cast<float>(y) });
-    if (files.size() == 1 && ZeroDrumProcessor::isSamplePad(pad) && owner_.loadPadSample(pad, juce::File(files[0])))
+    const juce::File file(files.size() == 1 ? files[0] : juce::String());
+    const bool loaded = pad >= 0
+                     && (file.hasFileExtension(ZeroDrumProcessor::kPartExtension) ? owner_.loadPart(pad, file)
+                                                                                  : ZeroDrumProcessor::isSamplePad(pad) && owner_.loadPadSample(pad, file));
+    if (loaded)
     {
         selected_ = pad;
         if (onSelect)
@@ -215,4 +225,39 @@ void PadGrid::chooseSample(int part)
                                   self->onSampleChanged(part);
                               self->repaint();
                           });
+}
+
+void PadGrid::choosePartFile(int part, bool save)
+{
+    const auto dir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Zero Drum").getChildFile("Parts");
+    dir.createDirectory();
+    const juce::String pattern = juce::String("*") + ZeroDrumProcessor::kPartExtension;
+    chooser_ = std::make_unique<juce::FileChooser>(save ? "Save " + owner_.padName(part) : "Load a part onto pad " + juce::String(part + 1),
+                                                   save ? dir.getChildFile(owner_.padName(part) + ZeroDrumProcessor::kPartExtension) : dir,
+                                                   pattern);
+    const int mode = save ? juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting
+                           : juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
+    juce::Component::SafePointer<PadGrid> self(this);
+    chooser_->launchAsync(mode, [self, part, save](const juce::FileChooser& fc) {
+        auto file = fc.getResult();
+        if (self == nullptr || file == juce::File {})
+            return;
+        if (save)
+        {
+            if (!file.hasFileExtension(ZeroDrumProcessor::kPartExtension))
+                file = file.withFileExtension(ZeroDrumProcessor::kPartExtension);
+            self->owner_.savePart(part, file);
+            return;
+        }
+        if (!self->owner_.loadPart(part, file))
+        {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, "Zero Drum",
+                                                   "That part doesn't fit this pad. Kit parts (kick, snare, hat, perc, 808) load on their own pad; "
+                                                   "sample pad parts load on pads 6 to 16.");
+            return;
+        }
+        if (self->onSampleChanged)
+            self->onSampleChanged(part);
+        self->repaint();
+    });
 }
