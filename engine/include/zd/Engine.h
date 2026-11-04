@@ -10,8 +10,11 @@
 #include "zd/engines/Sub808.h"
 #include "zd/engines/Clap.h"
 #include "zd/dsp/Clipper.h"
+#include "zd/dsp/Glue.h"
 #include "zd/dsp/Reverb.h"
+#include "zd/dsp/Svf.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <vector>
@@ -97,6 +100,7 @@ private:
     std::vector<float> scratch_;
     unsigned ageCounter_ = 0;
     std::int64_t samplesSinceTrigger_ = 0;
+    std::uint64_t hitCount_ = 0; ///< seeds per-hit sample variation; counts hits in order, so block size never matters
     double lastSubHz_ = 0.0;
 
     /// Advances the duck envelope one sample and returns the gain to apply.
@@ -129,16 +133,36 @@ public:
     void process(const Transport& transport, const NoteEvent* external, int numExternal,
                  float* left, float* right, int numSamples) noexcept;
 
+    /// The sequencer's own hits from the last process() call (not the external ones), sorted
+    /// by offset within that whole block. For MIDI out: the generated beat can drive other
+    /// instruments. Audio thread only, valid until the next process().
+    const NoteEvent* sequencedEvents() const noexcept { return sequenced_.data(); }
+    int numSequencedEvents() const noexcept { return numSequenced_; }
+
     Part& part(int index) noexcept { return parts_[static_cast<std::size_t>(index)]; }
     Sequencer& sequencer() noexcept { return sequencer_; }
 
+    /// Sets a part's sample while process() is not running (prepare time, offline renders).
     void setSample(int partIndex, SampleDataPtr sample);
+
+    /// Hands a sample to a part while audio runs, from one non-audio thread (the UI).
+    /// The audio thread picks it up at the start of its next block: the part's voices stop,
+    /// it plays the new sample, and its type becomes Sample (or Off for nullptr).
+    /// Lock-free and allocation-free on the audio side: the audio thread only copies a
+    /// shared_ptr, and the engine keeps the previous sample alive here so its memory is
+    /// always released on the calling thread, at the next submitSample() or
+    /// collectSamples(). Calling again before the audio thread took the last one replaces it.
+    void submitSample(int partIndex, SampleDataPtr sample) noexcept;
+    /// Releases samples the audio thread no longer uses. Same thread as submitSample().
+    void collectSamples() noexcept;
 
     /// Hands a new pattern to the audio thread from another thread (UI, generator).
     /// Lock-free and allocation-free on both sides; the audio thread picks it up at the
     /// start of its next block. Returns false if the audio thread is copying the previous
     /// one right now; call again.
     bool submitPattern(const Pattern& pattern) noexcept;
+    /// The same hand-off for a chain of up to four patterns (see Chain).
+    bool submitChain(const Chain& chain) noexcept;
 
     double sampleRate() const noexcept { return sampleRate_; }
 
@@ -164,20 +188,41 @@ public:
 
     /// The shared reverb that every part's reverbSend feeds. Its return joins the mix before
     /// the master gain. Realtime safe.
+    /// How many times each part has been triggered (sequencer and external hits). Written by
+    /// the audio thread, read by the UI for pad flashes; relaxed atomics, never locks.
+    std::uint32_t hitCount(int part) const noexcept
+    {
+        return hitCounts_[static_cast<std::size_t>(std::clamp(part, 0, kMaxParts - 1))].load(std::memory_order_relaxed);
+    }
+
     void setReverb(const dsp::ReverbSettings& settings) noexcept { reverbSettings_ = settings; reverb_.set(settings); }
     const dsp::ReverbSettings& reverb() const noexcept { return reverbSettings_; }
+
+    /// The glue compressor on the whole drum bus, after the reverb return and before the
+    /// master gain and clipper. Off by default. Realtime safe.
+    void setGlue(const dsp::GlueSettings& settings) noexcept { glue_.set(settings); }
+    const dsp::GlueSettings& glue() const noexcept { return glue_.settings(); }
+    /// Current glue gain reduction in dB, for a meter. Relaxed atomic, written per block.
+    float glueReductionDb() const noexcept { return glueReduction_.load(std::memory_order_relaxed); }
 
 private:
     void renderParts(float* left, float* right, float* send, int from, int to) noexcept;
     void applyPendingPattern() noexcept;
+    void applyPendingSamples() noexcept;
+    void applySweep(const Transport& transport, float* left, float* right, int numSamples) noexcept;
+    void retireSample(int partIndex) noexcept;
 
     enum PendingState : int { Empty = 0, Writing = 1, Ready = 2, Reading = 3 };
-    Pattern pendingPattern_ {};
+    Chain pendingChain_ {};
     std::atomic<int> pendingState_ { Empty };
 
     std::array<Part, kMaxParts> parts_;
     Sequencer sequencer_;
     std::array<NoteEvent, kMaxEventsPerBlock> events_ {};
+    std::array<NoteEvent, kMaxEventsPerBlock> sequenced_ {};
+    int numSequenced_ = 0;
+    int sequencedBase_ = 0; ///< offset of the current chunk inside the caller's block
+    bool inChunk_ = false;
     double sampleRate_ = 48000.0;
     int maxBlockSize_ = 0;
     float masterGain_ = 1.0f;
@@ -187,6 +232,24 @@ private:
     dsp::Reverb reverb_;
     dsp::ReverbSettings reverbSettings_ {};
     std::vector<float> send_;
+    dsp::GlueCompressor glue_;
+    // Build sweep (Pattern::sweep): the cutoff is set every kSweepChunk samples of absolute
+    // song position, so it is the same whatever the block size.
+    static constexpr int kSweepChunk = 32;
+    dsp::Svf sweepL_, sweepR_;
+    long long sweepChunk_ = -1;
+    bool sweepActive_ = false; ///< the transport ran last block (chunk state is valid)
+    bool sweepOn_ = false;     ///< the filter was in the path at the end of the last block
+
+    // Sample hand-off per part (see submitSample). owned_ mirrors what the audio thread's
+    // part holds, so the audio thread never drops the last reference to a sample.
+    enum SampleSlot : int { SlotIdle = 0, SlotWriting = 1, SlotReady = 2, SlotTaking = 3 };
+    std::array<std::atomic<int>, kMaxParts> sampleSlot_ {};
+    std::array<SampleDataPtr, kMaxParts> stagedSample_ {};
+    std::array<SampleDataPtr, kMaxParts> ownedSample_ {};
+    std::array<bool, kMaxParts> hasStaged_ {};
+    std::atomic<float> glueReduction_ { 0.0f };
+    std::array<std::atomic<std::uint32_t>, kMaxParts> hitCounts_ {};
 };
 
 /// Free-running clock for the standalone app and tests: advances a sample counter and

@@ -485,3 +485,58 @@ TEST_CASE("Builds: the snare roll rises 8ths -> 16ths -> 32nds -> 64ths with a r
     CHECK(countHits(pat.lanes[Sub]) == 0);
     CHECK(countHits(pat.lanes[Perc]) == 0);
 }
+
+TEST_CASE("Euclid: even spreads, rotation, and the classic patterns")
+{
+    auto hitsOf = [](const Lane& l) {
+        std::string s;
+        for (int i = 0; i < l.length; ++i)
+            s += l.steps[static_cast<std::size_t>(i)].on ? 'x' : '.';
+        return s;
+    };
+    Lane l;
+    l.length = 8;
+    euclid(l, 3);
+    CHECK(hitsOf(l) == "x..x..x."); // the tresillo
+    l.length = 16;
+    euclid(l, 4);
+    CHECK(hitsOf(l) == "x...x...x...x...");
+    l.length = 5;
+    euclid(l, 2, 1);
+    CHECK(countHits(l) == 2);
+    CHECK_FALSE(l.steps[0].on); // rotated off the downbeat
+    l.length = 7;
+    euclid(l, 0);
+    CHECK(countHits(l) == 0);
+    euclid(l, 99);
+    CHECK(countHits(l) == 7);
+}
+
+TEST_CASE("Humanize: seeded, small, and leaves locked lanes and empty steps alone")
+{
+    Pattern p;
+    loadDefaultPattern(p);
+    const Pattern before = p;
+    Pattern a = p, b = p;
+    humanize(a, 1.0f, 7, 1u << 0);
+    humanize(b, 1.0f, 7, 1u << 0);
+    bool changed = false;
+    for (int lane = 0; lane < kMaxParts; ++lane)
+        for (int i = 0; i < kMaxStepsPerLane; ++i)
+        {
+            const auto& x = a.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(i)];
+            const auto& y = b.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(i)];
+            const auto& o = before.lanes[static_cast<std::size_t>(lane)].steps[static_cast<std::size_t>(i)];
+            CHECK(x.on == o.on);
+            CHECK(x.microOffset == y.microOffset); // same seed, same result
+            CHECK(x.velocity == y.velocity);
+            CHECK(std::abs(x.microOffset - o.microOffset) <= 0.06f + 1e-6f);
+            if (lane == 0 || !o.on)
+                CHECK((x.microOffset == o.microOffset && x.velocity == o.velocity));
+            changed = changed || x.microOffset != o.microOffset;
+        }
+    CHECK(changed);
+    Pattern c = p;
+    humanize(c, 0.0f, 7, 0);
+    CHECK(c.lanes[1].steps[4].microOffset == p.lanes[1].steps[4].microOffset);
+}

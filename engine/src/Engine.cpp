@@ -1,9 +1,12 @@
 #include "zd/Engine.h"
 
 #include "zd/dsp/Math.h"
+#include "zd/dsp/Random.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <thread>
 
 namespace zd {
 
@@ -128,7 +131,21 @@ void Part::triggerEngine(EngineType t, float velocity, float toneDrop, int note,
             SampleParams sp = sampleParams;
             if (sp.decay > 0.0f)
                 sp.decay *= decayScale;
-            sampleVoices_[idx].trigger(sample.get(), sp, velocity);
+            // A step's note plays the sample chromatically around middle C (60 = as recorded).
+            if (note >= 0)
+                sp.pitchSemitones += static_cast<float>(std::clamp(note, 0, 127) - 60);
+            float level = velocity;
+            if (sp.vary > 0.0f)
+            {
+                // Per-hit variation, like a drummer never hitting twice the same: up to
+                // +-0.35 semitones and -3 dB at full Vary. Seeded by the hit count.
+                const float vary = std::clamp(sp.vary, 0.0f, 1.0f);
+                const auto h = dsp::hash64(++hitCount_ * 0x9E3779B97F4A7C15ull + 0x5A3D);
+                const double r1 = dsp::hashToUnit(h), r2 = dsp::hashToUnit(dsp::hash64(h));
+                sp.pitchSemitones += static_cast<float>((2.0 * r1 - 1.0) * 0.35 * vary);
+                level *= static_cast<float>(1.0 - 0.3 * vary * r2);
+            }
+            sampleVoices_[idx].trigger(sample.get(), sp, level);
             break;
         }
         case EngineType::FmPerc:
@@ -180,6 +197,7 @@ void Part::reset() noexcept
     for (auto& v : subVoices_) v.reset();
     for (auto& v : clapVoices_) v.reset();
     strip_.reset();
+    hitCount_ = 0;
     lastSubHz_ = 0.0;
     duckLevel_ = 0.0;
     duckStart_ = 0.0;
@@ -285,6 +303,7 @@ void Engine::prepare(double sampleRate, int maxBlockSize)
     send_.assign(static_cast<std::size_t>(std::max(maxBlockSize, 1)), 0.0f);
     reverb_.prepare(sampleRate);
     reverb_.set(reverbSettings_);
+    glue_.prepare(sampleRate);
 }
 
 void Engine::reset() noexcept
@@ -293,13 +312,154 @@ void Engine::reset() noexcept
         p.reset();
     clipper_.reset();
     reverb_.reset();
+    glue_.reset();
+    sweepL_.reset();
+    sweepR_.reset();
+    sweepChunk_ = -1;
+    sweepActive_ = false;
 }
 
 void Engine::setSample(int partIndex, SampleDataPtr sample)
 {
-    auto& p = parts_[static_cast<std::size_t>(partIndex)];
+    const auto i = static_cast<std::size_t>(partIndex);
+    auto& p = parts_[i];
     p.reset(); // no voice may keep pointing at the old buffer
-    p.sample = std::move(sample);
+    p.sample = sample;
+    sampleSlot_[i].store(SlotIdle, std::memory_order_relaxed);
+    stagedSample_[i].reset();
+    hasStaged_[i] = false;
+    ownedSample_[i] = std::move(sample);
+}
+
+void Engine::retireSample(int partIndex) noexcept
+{
+    // Only called once the audio thread has taken the staged sample: the part now holds it,
+    // so the previously owned one can go (freed here, on the caller's thread).
+    const auto i = static_cast<std::size_t>(partIndex);
+    if (hasStaged_[i])
+    {
+        ownedSample_[i] = std::move(stagedSample_[i]);
+        stagedSample_[i].reset();
+        hasStaged_[i] = false;
+    }
+}
+
+void Engine::submitSample(int partIndex, SampleDataPtr sample) noexcept
+{
+    if (partIndex < 0 || partIndex >= kMaxParts)
+        return;
+    const auto i = static_cast<std::size_t>(partIndex);
+    auto& slot = sampleSlot_[i];
+    for (;;)
+    {
+        int expected = SlotIdle;
+        if (slot.compare_exchange_weak(expected, SlotWriting, std::memory_order_acquire))
+        {
+            retireSample(partIndex); // the last hand-off (if any) was taken
+            break;
+        }
+        expected = SlotReady; // not taken yet: replace it (it never reached the audio thread)
+        if (slot.compare_exchange_weak(expected, SlotWriting, std::memory_order_acquire))
+            break;
+        std::this_thread::yield(); // the audio thread is copying it right now (a few ns)
+    }
+    stagedSample_[i] = std::move(sample);
+    hasStaged_[i] = true;
+    slot.store(SlotReady, std::memory_order_release);
+}
+
+void Engine::collectSamples() noexcept
+{
+    for (int p = 0; p < kMaxParts; ++p)
+    {
+        int expected = SlotIdle;
+        auto& slot = sampleSlot_[static_cast<std::size_t>(p)];
+        if (hasStaged_[static_cast<std::size_t>(p)] && slot.compare_exchange_strong(expected, SlotWriting, std::memory_order_acquire))
+        {
+            retireSample(p);
+            slot.store(SlotIdle, std::memory_order_release);
+        }
+    }
+}
+
+void Engine::applySweep(const Transport& transport, float* left, float* right, int numSamples) noexcept
+{
+    if (!transport.playing || transport.bpm <= 0.0)
+    {
+        if (sweepActive_)
+        {
+            sweepL_.reset();
+            sweepR_.reset();
+            sweepChunk_ = -1;
+            sweepActive_ = false;
+        }
+        return;
+    }
+    const double samplesPerBeat = 60.0 * sampleRate_ / transport.bpm;
+    const long long first = std::llround(transport.ppqPosition * samplesPerBeat);
+    bool on = sweepActive_ && sweepChunk_ >= 0 ? sweepOn_ : false;
+    for (int n = 0; n < numSamples; ++n)
+    {
+        const long long at = first + n;
+        const long long chunk = (at >= 0 ? at : at - (kSweepChunk - 1)) / kSweepChunk;
+        if (chunk != sweepChunk_)
+        {
+            // Everything is decided from the chunk's absolute position: which pattern plays
+            // there (a chain may change it), where its pass began, and so the cutoff.
+            sweepChunk_ = chunk;
+            const double beats = static_cast<double>(chunk * kSweepChunk) / samplesPerBeat;
+            const Pattern& pattern = sequencer_.patternAt(beats);
+            const Sweep& sw = pattern.sweep;
+            const bool wasOn = on;
+            on = sw.steps > 0;
+            if (!on)
+            {
+                if (wasOn)
+                {
+                    sweepL_.reset();
+                    sweepR_.reset();
+                }
+            }
+            else
+            {
+                const double loopSamples = static_cast<double>(sw.steps) * pattern.stepBeats * samplesPerBeat;
+                const auto passStart = static_cast<double>(std::llround(sequencer_.passStartAt(beats) * samplesPerBeat));
+                double pos = std::fmod(static_cast<double>(chunk * kSweepChunk) - passStart, loopSamples) / loopSamples;
+                if (pos < 0.0)
+                    pos += 1.0;
+                const double lo = std::clamp(static_cast<double>(sw.startHz), 20.0, 0.45 * sampleRate_);
+                const double hi = std::clamp(static_cast<double>(sw.endHz), lo, 0.45 * sampleRate_);
+                const double q = 0.7071 + 2.3 * std::clamp(static_cast<double>(sw.resonance), 0.0, 1.0);
+                // Even in log-frequency with a slow start: most of the rise lands in the last bars.
+                const double hz = lo * std::pow(hi / lo, std::pow(pos, 1.5));
+                sweepL_.setCoefficients(hz, q, sampleRate_);
+                sweepR_.setCoefficients(hz, q, sampleRate_);
+            }
+        }
+        if (on)
+        {
+            left[n] = static_cast<float>(sweepL_.process(left[n]).high);
+            right[n] = static_cast<float>(sweepR_.process(right[n]).high);
+        }
+    }
+    sweepOn_ = on;
+    sweepActive_ = true;
+}
+
+void Engine::applyPendingSamples() noexcept
+{
+    for (int p = 0; p < kMaxParts; ++p)
+    {
+        const auto i = static_cast<std::size_t>(p);
+        int expected = SlotReady;
+        if (!sampleSlot_[i].compare_exchange_strong(expected, SlotTaking, std::memory_order_acquire))
+            continue;
+        auto& part = parts_[i];
+        part.reset();
+        part.sample = stagedSample_[i]; // refcount only; ownedSample_ keeps the old one alive
+        part.type = part.sample ? EngineType::Sample : EngineType::Off;
+        sampleSlot_[i].store(SlotIdle, std::memory_order_release);
+    }
 }
 
 bool Engine::submitPattern(const Pattern& pattern) noexcept
@@ -311,7 +471,24 @@ bool Engine::submitPattern(const Pattern& pattern) noexcept
         if (!pendingState_.compare_exchange_strong(expected, Writing, std::memory_order_acquire))
             return false;
     }
-    pendingPattern_ = pattern;
+    pendingChain_.slots[0] = pattern;
+    pendingChain_.count = 1;
+    pendingState_.store(Ready, std::memory_order_release);
+    return true;
+}
+
+bool Engine::submitChain(const Chain& chain) noexcept
+{
+    int expected = Empty;
+    if (!pendingState_.compare_exchange_strong(expected, Writing, std::memory_order_acquire))
+    {
+        expected = Ready;
+        if (!pendingState_.compare_exchange_strong(expected, Writing, std::memory_order_acquire))
+            return false;
+    }
+    pendingChain_.count = std::clamp(chain.count, 1, kMaxChain);
+    for (int i = 0; i < pendingChain_.count; ++i)
+        pendingChain_.slots[static_cast<std::size_t>(i)] = chain.slots[static_cast<std::size_t>(i)];
     pendingState_.store(Ready, std::memory_order_release);
     return true;
 }
@@ -321,7 +498,7 @@ void Engine::applyPendingPattern() noexcept
     int expected = Ready;
     if (!pendingState_.compare_exchange_strong(expected, Reading, std::memory_order_acquire))
         return;
-    sequencer_.pattern() = pendingPattern_;
+    sequencer_.setChain(pendingChain_);
     pendingState_.store(Empty, std::memory_order_release);
 }
 
@@ -338,7 +515,13 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
 {
     std::fill(left, left + numSamples, 0.0f);
     std::fill(right, right + numSamples, 0.0f);
+    if (!inChunk_)
+    {
+        numSequenced_ = 0;
+        sequencedBase_ = 0;
+    }
     applyPendingPattern();
+    applyPendingSamples();
 
     // Blocks larger than prepare() promised are rendered in chunks so scratch buffers suffice.
     if (numSamples > maxBlockSize_ && maxBlockSize_ > 0)
@@ -353,7 +536,10 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
             for (int i = 0; i < numExternal && numChunk < static_cast<int>(chunkEvents.size()); ++i)
                 if (external[i].offset >= done && external[i].offset < done + n)
                     chunkEvents[static_cast<std::size_t>(numChunk++)] = { external[i].offset - done, external[i].part, external[i].velocity, external[i].note };
+            inChunk_ = true;
+            sequencedBase_ = done;
             process(t, chunkEvents.data(), numChunk, left + done, right + done, n);
+            inChunk_ = false;
             t.ppqPosition += static_cast<double>(n) * t.bpm / (60.0 * sampleRate_);
             done += n;
         }
@@ -361,6 +547,22 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
     }
 
     int count = sequencer_.collect(transport, sampleRate_, numSamples, events_.data(), kMaxEventsPerBlock);
+    {
+        // Keep the sequencer's hits for MIDI out, sorted by offset (insertion: no allocation).
+        const int firstNew = numSequenced_;
+        for (int i = 0; i < count && numSequenced_ < kMaxEventsPerBlock; ++i)
+        {
+            NoteEvent e = events_[static_cast<std::size_t>(i)];
+            e.offset += sequencedBase_;
+            int j = numSequenced_++;
+            while (j > firstNew && sequenced_[static_cast<std::size_t>(j - 1)].offset > e.offset)
+            {
+                sequenced_[static_cast<std::size_t>(j)] = sequenced_[static_cast<std::size_t>(j - 1)];
+                --j;
+            }
+            sequenced_[static_cast<std::size_t>(j)] = e;
+        }
+    }
     for (int i = 0; i < numExternal && count < kMaxEventsPerBlock; ++i)
         if (external[i].part >= 0 && external[i].part < kMaxParts)
             events_[static_cast<std::size_t>(count++)] = NoteEvent { std::clamp(external[i].offset, 0, numSamples - 1), external[i].part, external[i].velocity, external[i].note };
@@ -394,6 +596,8 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
                 if (p != e.part && ((cuts >> p) & 1u) != 0)
                     parts_[static_cast<std::size_t>(p)].choke();
         parts_[static_cast<std::size_t>(e.part)].trigger(e.velocity, e.note);
+        auto& hits = hitCounts_[static_cast<std::size_t>(e.part)];
+        hits.store(hits.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
         if (e.part == kDuckSourcePart)
             for (int p = 0; p < kMaxParts; ++p)
                 if (p != kDuckSourcePart && parts_[static_cast<std::size_t>(p)].mix.duck > 0.0f)
@@ -401,6 +605,9 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
     }
     renderParts(left, right, send, position, numSamples);
     reverb_.process(send, left, right, numSamples);
+    applySweep(transport, left, right, numSamples);
+    glue_.process(left, right, numSamples);
+    glueReduction_.store(static_cast<float>(glue_.gainReductionDb()), std::memory_order_relaxed);
 
     if (masterGain_ != 1.0f)
         for (int n = 0; n < numSamples; ++n)

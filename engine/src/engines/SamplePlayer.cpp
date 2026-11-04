@@ -29,6 +29,7 @@ void SamplePlayerVoice::trigger(const SampleData* sample, const SampleParams& p,
     env_ = 1.0;
     envCoef_ = p.decay > 0.0f ? dsp::decayCoefficient(p.decay, sampleRate_) : 1.0;
     velocity_ = velocity;
+    reverse_ = p.reverse;
 }
 
 float SamplePlayerVoice::hermite(const float* data, int length, double position) noexcept
@@ -58,11 +59,48 @@ void SamplePlayerVoice::render(float* out, int numSamples) noexcept
             endNote();
             return;
         }
-        const float s = hermite(data, length, position_);
+        const float s = hermite(data, length, reverse_ ? static_cast<double>(length - 1) - position_ : position_);
         out[i] += s * static_cast<float>(env_) * velocity_ * fade_.next();
         position_ += increment_;
         env_ *= envCoef_;
     }
+}
+
+bool prepareOneShot(SampleData& sample, float peakDb)
+{
+    auto& x = sample.samples;
+    constexpr float threshold = 0.001f; // -60 dBFS
+    std::size_t first = 0;
+    while (first < x.size() && std::abs(x[first]) < threshold)
+        ++first;
+    if (first == x.size())
+        return false;
+    std::size_t last = x.size();
+    while (last > first && std::abs(x[last - 1]) < threshold)
+        --last;
+
+    const auto pre = static_cast<std::size_t>(0.001 * sample.sampleRate);
+    const std::size_t start = first > pre ? first - pre : 0;
+    const std::size_t fade = std::min<std::size_t>(static_cast<std::size_t>(0.002 * sample.sampleRate), last - start);
+    const std::size_t end = std::min(x.size(), last + fade);
+    if (start > 0)
+        std::copy(x.begin() + static_cast<long>(start), x.begin() + static_cast<long>(end), x.begin());
+    x.resize(end - start);
+    // Fade out over the tail end so trimming never leaves a click.
+    for (std::size_t i = 0; i < fade && i < x.size(); ++i)
+        x[x.size() - 1 - i] *= static_cast<float>(i) / static_cast<float>(fade);
+
+    if (peakDb < 0.0f)
+    {
+        float peak = 0.0f;
+        for (float v : x)
+            peak = std::max(peak, std::abs(v));
+        const float gain = dsp::dbToGain(peakDb) / peak;
+        for (float& v : x)
+            v *= gain;
+    }
+    x.shrink_to_fit();
+    return true;
 }
 
 SampleDataPtr makeSynthHatSample(double sampleRate)

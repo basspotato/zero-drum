@@ -72,7 +72,18 @@ void addFill(Pattern& pattern, float intensity, std::uint64_t seed, std::uint32_
 /// to 32nds to 64ths with a velocity ramp, a kick on the quarters that drops out for the
 /// last quarter of the build, offbeat hats, no 808 or perc, and an 8th of silence at the
 /// end before the drop. Unlocked lanes are replaced; all of them take the build's length.
+/// It also sets the pattern's sweep: a high-pass rising over the whole build (see Sweep).
 void makeBuild(Pattern& pattern, int bars, std::uint32_t lockMask) noexcept;
+
+/// Euclidean rhythm: spreads `hits` as evenly as possible over the lane's length (Bjorklund's
+/// even distribution, written as a ceiling formula), starting from `rotate` steps in. The
+/// lane's existing steps are replaced; velocities come out slightly accented on the first hit.
+void euclid(Lane& lane, int hits, int rotate = 0) noexcept;
+
+/// Seeded humanize: small timing nudges (up to 6% of a step at amount 1) and velocity
+/// variation (up to +/-12%) on every hit of the unlocked lanes. The same seed always gives the
+/// same result; amount 0 changes nothing.
+void humanize(Pattern& pattern, float amount, std::uint64_t seed, std::uint32_t lockMask) noexcept;
 
 /// Counts the active steps in one lane (within its length).
 int countHits(const Lane& lane) noexcept;

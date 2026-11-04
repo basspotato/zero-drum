@@ -6,7 +6,7 @@ juce_add_plugin(ZeroDrum
     PLUGIN_CODE ZrDm
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
-    NEEDS_MIDI_OUTPUT FALSE
+    NEEDS_MIDI_OUTPUT TRUE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
@@ -20,7 +20,13 @@ clap_juce_extensions_plugin(TARGET ZeroDrum
 
 target_sources(ZeroDrum PRIVATE
     src/PluginProcessor.cpp
-    src/PluginEditor.cpp)
+    src/PluginEditor.cpp
+    src/PadGrid.cpp
+    src/StepGrid.cpp
+    src/MixPage.cpp
+    src/LookAndFeel.cpp
+    src/SoundPage.cpp
+    src/GenStrip.cpp)
 
 target_compile_definitions(ZeroDrum PUBLIC
     JUCE_WEB_BROWSER=0
@@ -35,3 +41,15 @@ target_link_libraries(ZeroDrum
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# Plugin-level tests (the JUCE shell, headless). Built with the engine tests.
+if(ZD_BUILD_TESTS)
+    juce_add_console_app(zd_plugin_tests PRODUCT_NAME "zd_plugin_tests")
+    target_sources(zd_plugin_tests PRIVATE tests/test_midi_out.cpp tests/test_parts.cpp)
+    target_include_directories(zd_plugin_tests PRIVATE src)
+    target_compile_definitions(zd_plugin_tests PRIVATE
+        JUCE_WEB_BROWSER=0
+        JUCE_USE_CURL=0)
+    target_link_libraries(zd_plugin_tests PRIVATE ZeroDrum zd_engine juce::juce_audio_utils doctest::doctest)
+    add_test(NAME zd_plugin_tests COMMAND zd_plugin_tests)
+endif()

@@ -17,6 +17,7 @@
 #include <iterator>
 #include <memory>
 #include <string>
+#include <set>
 #include <vector>
 
 using namespace zd;
@@ -282,4 +283,108 @@ TEST_CASE("Export: MIDI files are valid and match the hits the sequencer plays")
         CHECK(n.tick < static_cast<int>(loopBeats * exporting::kMidiPpq));
     }
     fs::remove_all(dir);
+}
+
+TEST_CASE("Export: every drum part gets its own MIDI note in 36..51")
+{
+    std::set<int> seen;
+    for (int part = 0; part < kMaxParts; ++part)
+    {
+        if (part == 4)
+            continue; // the 808 is pitched, on its own MIDI channel
+        const int note = exporting::defaultMidiNote(part);
+        CHECK(note >= 36);
+        CHECK(note <= 51);
+        CHECK(seen.insert(note).second);
+    }
+}
+
+TEST_CASE("Export: with the glue on, stems are taken before it and still sum to the dry bus")
+{
+    auto e = makeEngine(gen::Style::BoomBap, 3);
+    dsp::GlueSettings glue;
+    glue.on = true;
+    glue.thresholdDb = -30.0f; // squeeze hard, so a stem through the glue would not add up
+    glue.ratio = 6.0f;
+    e->setGlue(glue);
+    exporting::ExportOptions opt;
+    opt.bars = 1;
+    opt.bpm = 92.0;
+    const fs::path dir = tempDir("glue");
+    REQUIRE(exporting::exportLoop(*e, opt, dir).ok);
+    CHECK(e->glue().on); // restored afterwards
+    const auto glued = wavSamples(dir / "mix.wav");
+
+    // The same loop with the glue off, mix only.
+    glue.on = false;
+    e->setGlue(glue);
+    opt.mixOnly = true;
+    const fs::path dryDir = tempDir("glue-dry");
+    const auto res = exporting::exportLoop(*e, opt, dryDir);
+    REQUIRE(res.ok);
+    CHECK(res.files.size() == 1);
+    CHECK_FALSE(fs::exists(dryDir / "parts"));
+    const auto dry = wavSamples(dryDir / "mix.wav");
+    REQUIRE(dry.size() == glued.size());
+
+    std::vector<double> sum(dry.size(), 0.0);
+    for (const auto& entry : fs::directory_iterator(dir / "parts"))
+    {
+        const auto part = wavSamples(entry.path());
+        for (std::size_t i = 0; i < part.size(); ++i)
+            sum[i] += part[i];
+    }
+    double worstDry = 0.0, worstGlued = 0.0;
+    for (std::size_t i = 0; i < dry.size(); ++i)
+    {
+        worstDry = std::max(worstDry, std::abs(sum[i] - dry[i]));
+        worstGlued = std::max(worstGlued, std::abs(sum[i] - glued[i]));
+    }
+    CHECK(worstDry < 1.0e-5);
+    CHECK(worstGlued > 1.0e-3); // the glue really did something to the mix
+}
+
+TEST_CASE("Export: a chain exports every slot in order, MIDI and audio alike")
+{
+    auto chain = std::make_unique<Chain>();
+    chain->count = 2;
+    Pattern& a = chain->slots[0];
+    a = Pattern {};
+    for (int s : { 0, 4, 8, 12 })
+        a.lanes[0].steps[static_cast<std::size_t>(s)] = Step { true, 1.0f, 1.0f, 0.0f, -1, 1 };
+    Pattern& b = chain->slots[1];
+    b = Pattern {};
+    b.lanes[1].length = 32;
+    b.lanes[1].steps[0] = Step { true, 1.0f, 1.0f, 0.0f, -1, 1 };
+    b.lanes[1].steps[16] = Step { true, 1.0f, 1.0f, 0.0f, -1, 1 };
+
+    auto e = std::make_unique<Engine>();
+    e->prepare(48000.0, 512);
+    loadDefaultKit(*e);
+    e->sequencer().setChain(*chain);
+    CHECK(exporting::loopBars(e->sequencer()) == 3);
+
+    // Kicks only in bar 1; snares on bars 2 and 3. Same again one cycle (48 steps) later.
+    for (long long first : { 0LL, 48LL })
+    {
+        const auto kicks = exporting::realizeLane(e->sequencer(), 0, first, 48, 36);
+        const auto snares = exporting::realizeLane(e->sequencer(), 1, first, 48, 38);
+        REQUIRE(kicks.size() == 4);
+        REQUIRE(snares.size() == 2);
+        CHECK(kicks[3].tick == 3 * exporting::kMidiPpq);
+        CHECK(snares[0].tick == 4 * exporting::kMidiPpq);
+        CHECK(snares[1].tick == 8 * exporting::kMidiPpq);
+    }
+
+    // The audio render is three bars long and has the snare where the MIDI says.
+    const auto dir = std::filesystem::temp_directory_path() / "zd-chain-export";
+    std::filesystem::remove_all(dir);
+    exporting::ExportOptions options;
+    options.bpm = 120.0;
+    options.bars = 3;
+    options.mixOnly = true;
+    const auto result = exporting::exportLoop(*e, options, dir);
+    REQUIRE(result.ok);
+    CHECK(std::filesystem::file_size(dir / "mix.wav") > 3u * 96000u * 2u * 2u); // 3 bars, stereo, at least 16-bit
+    std::filesystem::remove_all(dir);
 }

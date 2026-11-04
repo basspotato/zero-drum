@@ -13,6 +13,8 @@ struct SampleParams
     float pitchSemitones = 0.0f;
     float decay = 0.0f;  ///< seconds to -60 dB; 0 = play the whole sample at full level
     float start = 0.0f;  ///< start position as a fraction of the sample length, 0..1
+    bool reverse = false; ///< play from the end to the start (start then counts from the end)
+    float vary = 0.0f;    ///< 0..1: each hit gets a slightly different pitch and level (seeded per hit)
 };
 
 class SamplePlayerVoice final : public Voice
@@ -32,7 +34,14 @@ private:
     double position_ = 0.0, increment_ = 1.0;
     double env_ = 1.0, envCoef_ = 1.0;
     float velocity_ = 1.0f;
+    bool reverse_ = false;
 };
+
+/// Cleans a loaded one-shot in place: trims silence (below -60 dBFS) from both ends, keeping
+/// 1 ms before the first sound and fading the last 2 ms so the cut never clicks, then
+/// normalizes the peak to `peakDb` (pass 0 or more to skip normalizing). Returns false if
+/// the sample is silent (it is left unchanged). Allocation-free except for the final shrink.
+bool prepareOneShot(SampleData& sample, float peakDb = -1.0f);
 
 /// Builds a synthesized closed hi-hat one-shot: six square oscillators at classic
 /// inharmonic ratios, high-passed, with a fast decay. Lets the plugin ship a sample part

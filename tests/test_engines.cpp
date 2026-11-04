@@ -123,6 +123,24 @@ TEST_CASE("Sample player: unity pitch at equal rates reproduces the sample exact
     CHECK_FALSE(voice.isActive());
 }
 
+TEST_CASE("Sample player: reverse plays the sample back to front")
+{
+    SampleData data;
+    data.sampleRate = 48000.0;
+    for (int i = 0; i < 1000; ++i)
+        data.samples.push_back(static_cast<float>(std::sin(i * 0.1)) * static_cast<float>(i) / 1000.0f);
+
+    SamplePlayerVoice voice;
+    voice.prepare(48000.0);
+    SampleParams p;
+    p.reverse = true;
+    voice.trigger(&data, p, 1.0f);
+    const auto out = renderVoice(voice, 1200, 64);
+    for (int i = 0; i < 999; ++i)
+        REQUIRE(out[static_cast<std::size_t>(i)] == doctest::Approx(data.samples[static_cast<std::size_t>(999 - i)]).epsilon(1e-6));
+    CHECK_FALSE(voice.isActive());
+}
+
 TEST_CASE("Sample player: +12 semitones plays twice as fast")
 {
     SampleData data;

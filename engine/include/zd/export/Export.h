@@ -48,6 +48,8 @@ struct ExportOptions
     /// wrap into its start: the files loop seamlessly in a DAW or sampler.
     bool seamlessLoop = true;
     std::array<std::string, kMaxParts> partNames {};
+    /// Only mix.wav (no part files, MIDI or pattern): for dragging the loop out as audio.
+    bool mixOnly = false;
 };
 
 struct ExportResult
@@ -67,6 +69,8 @@ ExportResult exportLoop(Engine& engine, const ExportOptions& options, const std:
 
 /// Bars in one loop of the pattern: the longest lane that plays, rounded up to whole bars (1..16).
 int loopBars(const Pattern& pattern) noexcept;
+/// Bars in one cycle of what the sequencer plays: loopBars() of slot A, or a chain's total.
+int loopBars(const Sequencer& sequencer) noexcept;
 
 /// MIDI tracks for the first `bars` of the pattern, one per lane that plays (or only `lane`
 /// when it is >= 0). Lanes in `pitchedMask` go on MIDI channel 2 with their notes, a melodic
@@ -79,6 +83,8 @@ std::vector<MidiTrack> patternTracks(const Sequencer& sequencer, int bars, const
 /// plugin plays the kick melodically from channel 3 too.
 inline constexpr int kMelodicKickChannel = 2;
 bool melodicKick(const Pattern& pattern, int lane) noexcept;
+/// Whether the lane plays melodically in any slot of the sequencer's chain.
+bool melodicKick(const Sequencer& sequencer, int lane) noexcept;
 
 /// General MIDI drum note for a default-kit part, used for drum lanes in MIDI export.
 int defaultMidiNote(int part) noexcept;

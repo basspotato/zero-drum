@@ -14,14 +14,18 @@ std::string serializePattern(const Pattern& p)
     os.precision(9);
     os << "zdpattern 1\n";
     os << "grid " << p.stepBeats << " swing " << p.swing << "\n";
+    if (p.sweep.steps > 0)
+        os << "sweep " << p.sweep.steps << " " << p.sweep.startHz << " " << p.sweep.endHz << " " << p.sweep.resonance << "\n";
     for (int lane = 0; lane < kMaxParts; ++lane)
     {
         const Lane& l = p.lanes[static_cast<std::size_t>(lane)];
         const bool any = std::any_of(l.steps.begin(), l.steps.begin() + std::clamp(l.length, 0, kMaxStepsPerLane),
                                      [](const Step& s) { return s.on; });
-        if (!any && l.length == 16)
+        if (!any && l.length == 16 && !l.straight)
             continue; // default, empty lane
         os << "lane " << lane << " " << l.length << "\n";
+        if (l.straight)
+            os << "straight\n";
         for (int i = 0; i < std::clamp(l.length, 0, kMaxStepsPerLane); ++i)
         {
             const Step& s = l.steps[static_cast<std::size_t>(i)];
@@ -53,6 +57,15 @@ bool deserializePattern(std::string_view text, Pattern& out)
             if (!(is >> p.stepBeats >> swingWord >> p.swing) || swingWord != "swing" || p.stepBeats <= 0.0)
                 return false;
         }
+        else if (word == "sweep")
+        {
+            Sweep& sw = p.sweep;
+            if (!(is >> sw.steps >> sw.startHz >> sw.endHz >> sw.resonance) || sw.steps < 0 || sw.steps > 64 * kMaxStepsPerLane)
+                return false;
+            sw.startHz = std::clamp(sw.startHz, 20.0f, 20000.0f);
+            sw.endHz = std::clamp(sw.endHz, sw.startHz, 20000.0f);
+            sw.resonance = std::clamp(sw.resonance, 0.0f, 1.0f);
+        }
         else if (word == "lane")
         {
             int index = 0, length = 0;
@@ -60,6 +73,12 @@ bool deserializePattern(std::string_view text, Pattern& out)
                 return false;
             current = &p.lanes[static_cast<std::size_t>(index)];
             current->length = length;
+        }
+        else if (word == "straight")
+        {
+            if (current == nullptr)
+                return false;
+            current->straight = true;
         }
         else if (word == "step")
         {
