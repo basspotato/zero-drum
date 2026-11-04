@@ -10,6 +10,7 @@
 #include "zd/engines/Sub808.h"
 #include "zd/engines/Clap.h"
 #include "zd/dsp/Clipper.h"
+#include "zd/dsp/Reverb.h"
 
 #include <array>
 #include <atomic>
@@ -28,6 +29,8 @@ struct PartMix
     /// A 3 ms raised-cosine attack keeps sustained sounds (808s) click-free; then it recovers over duckRelease.
     float duck = 0.0f;
     float duckRelease = 0.12f; ///< seconds, time constant of the recovery
+    /// Send to the shared reverb, 0..1, after the part's gain and sidechain (post-fader).
+    float reverbSend = 0.0f;
 };
 
 /// The part whose hits drive the sidechain.
@@ -40,7 +43,8 @@ public:
     void prepare(double sampleRate, int maxBlockSize);
     /// `note` is a MIDI note for pitched engines (808); -1 uses the part's own tune.
     void trigger(float velocity, int note = -1) noexcept;
-    void render(float* left, float* right, int numSamples) noexcept;
+    /// Adds the part into `left`/`right` and its reverb send into `send`.
+    void render(float* left, float* right, float* send, int numSamples) noexcept;
     bool isActive() const noexcept;
     /// Cuts every sounding voice with the short kill fade, unless this part was triggered
     /// on this very sample.
@@ -158,8 +162,13 @@ public:
     const MasterClipSettings& masterClip() const noexcept { return masterClip_; }
     int masterLatency() const noexcept { return masterStage_ ? dsp::MasterClipper::kLatency : 0; }
 
+    /// The shared reverb that every part's reverbSend feeds. Its return joins the mix before
+    /// the master gain. Realtime safe.
+    void setReverb(const dsp::ReverbSettings& settings) noexcept { reverbSettings_ = settings; reverb_.set(settings); }
+    const dsp::ReverbSettings& reverb() const noexcept { return reverbSettings_; }
+
 private:
-    void renderParts(float* left, float* right, int from, int to) noexcept;
+    void renderParts(float* left, float* right, float* send, int from, int to) noexcept;
     void applyPendingPattern() noexcept;
 
     enum PendingState : int { Empty = 0, Writing = 1, Ready = 2, Reading = 3 };
@@ -175,6 +184,9 @@ private:
     bool masterStage_ = false;
     dsp::MasterClipper clipper_;
     MasterClipSettings masterClip_ {};
+    dsp::Reverb reverb_;
+    dsp::ReverbSettings reverbSettings_ {};
+    std::vector<float> send_;
 };
 
 /// Free-running clock for the standalone app and tests: advances a sample counter and

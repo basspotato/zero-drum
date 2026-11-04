@@ -96,6 +96,11 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
 - **Chokes**: **808 Cuts Kick** stops the kick's tail when the 808 plays on its own (on in the
   trap and drill kits); **Kick Cuts 808** does the reverse. Hits on the same sample never cut
   each other. The engine supports any part cutting any others (open and closed hats).
+- **Reverb**: one shared stereo reverb (8-line feedback delay network) with **Reverb Decay**,
+  **Size**, **Pre-delay**, **Damping**, a **High-pass** on the return (keeps the low end dry) and
+  **Level**. Each part has a post-fader **Reverb Send**; the 808 stays dry. Style kits set it:
+  a big 40% wet clap for dubstep, a plate on pop snares, a dark rumble under the techno kick,
+  short rooms elsewhere.
 - **Sidechain**: every kick ducks the 808 (**808 Sidechain**) and optionally the perc
   (**Perc Sidechain**), with a 3 ms click-free attack and **Sidechain Release**. Style kits set
   it: a short duck for trap-family styles, a full pump for house, trance and festival.

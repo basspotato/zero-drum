@@ -37,6 +37,9 @@ struct StyleKit
     std::array<float, 5> velocityTone {};
     /// The 808 cuts the kick's tail when it plays on its own (trap, drill).
     bool subCutsKick = false;
+    /// The shared reverb and each part's send (0 = dry).
+    dsp::ReverbSettings reverb {};
+    std::array<float, 5> reverbSend {};
 };
 
 StyleKit styleKit(Style style) noexcept;

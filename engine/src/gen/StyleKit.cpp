@@ -160,6 +160,35 @@ constexpr std::array<ClapRow, static_cast<std::size_t>(Style::kCount)> kClaps { 
     { S, C, -2.0f, 1200, 10, 4, 500, 0.7f, 0.5f, 0.3f }, // Festival
 } };
 
+// Reverb per style, in Style order: decay s, size, pre-delay ms, damping Hz, return HP Hz,
+// then sends for kick, snare, hat, perc. The 808 always stays dry. From the guide: dubstep
+// clap about 40% wet with the return high-passed at 500 Hz, a plate on pop snares, a dark
+// low rumble on the techno kick; short rooms elsewhere, and trap and drill nearly dry.
+struct RoomRow
+{
+    float decay, size, preDelayMs, dampingHz, highPassHz;
+    float kick, snare, hat, perc;
+};
+constexpr std::array<RoomRow, static_cast<std::size_t>(Style::kCount)> kRooms { {
+    { 0.8f, 0.4f, 10, 7000, 500, 0.0f, 0.08f, 0.0f, 0.05f },  // Trap
+    { 0.8f, 0.4f, 10, 7000, 500, 0.0f, 0.10f, 0.0f, 0.05f },  // Drill
+    { 0.6f, 0.3f, 5, 5000, 300, 0.0f, 0.12f, 0.0f, 0.10f },   // Boom bap: a small room
+    { 1.0f, 0.5f, 15, 7000, 400, 0.0f, 0.18f, 0.05f, 0.15f }, // House
+    { 1.6f, 0.7f, 5, 900, 50, 0.08f, 0.10f, 0.0f, 0.20f },    // Techno: dark rumble under the kick
+    { 0.8f, 0.4f, 10, 8000, 400, 0.0f, 0.12f, 0.05f, 0.10f }, // UK garage
+    { 0.9f, 0.4f, 8, 8000, 500, 0.0f, 0.10f, 0.0f, 0.05f },   // Drum and bass
+    { 1.0f, 0.5f, 15, 7000, 400, 0.0f, 0.12f, 0.0f, 0.15f },  // Afrobeats
+    { 1.0f, 0.5f, 15, 6000, 400, 0.0f, 0.15f, 0.0f, 0.10f },  // Amapiano
+    { 0.7f, 0.3f, 5, 8000, 500, 0.0f, 0.10f, 0.0f, 0.05f },   // Jersey club
+    { 0.8f, 0.4f, 10, 7000, 400, 0.0f, 0.12f, 0.0f, 0.08f },  // Reggaeton
+    { 1.2f, 0.6f, 20, 9000, 400, 0.0f, 0.22f, 0.05f, 0.10f }, // Pop: a plate on the snare
+    { 0.9f, 0.4f, 10, 6000, 400, 0.0f, 0.12f, 0.0f, 0.05f },  // Hip-hop
+    { 1.2f, 0.6f, 10, 8000, 500, 0.0f, 0.40f, 0.0f, 0.15f },  // Dubstep: big clap, HP 500
+    { 1.5f, 0.7f, 20, 8000, 400, 0.0f, 0.22f, 0.05f, 0.15f }, // Trance
+    { 1.0f, 0.5f, 10, 7000, 500, 0.0f, 0.15f, 0.0f, 0.10f },  // Hardstyle
+    { 1.4f, 0.7f, 20, 8000, 400, 0.0f, 0.25f, 0.05f, 0.15f }, // Festival
+} };
+
 } // namespace
 
 StyleKit styleKit(Style style) noexcept
@@ -242,6 +271,13 @@ StyleKit styleKit(Style style) noexcept
     k.velocityTone = ghosty ? std::array<float, 5> { 0.3f, 1.0f, 0.7f, 0.6f, 0.0f }
                             : std::array<float, 5> { 0.2f, 0.5f, 0.4f, 0.4f, 0.0f };
     k.subCutsKick = style == Style::Trap || style == Style::Drill;
+    const RoomRow& room = kRooms[static_cast<std::size_t>(index)];
+    k.reverb.decay = room.decay;
+    k.reverb.size = room.size;
+    k.reverb.preDelayMs = room.preDelayMs;
+    k.reverb.dampingHz = room.dampingHz;
+    k.reverb.highPassHz = room.highPassHz;
+    k.reverbSend = { room.kick, room.snare, room.hat, room.perc, 0.0f };
     return k;
 }
 
@@ -289,7 +325,9 @@ void applyKit(const StyleKit& kit, Engine& engine, int rootNote, std::uint32_t s
             engine.part(i).strip = kit.strips[static_cast<std::size_t>(i)];
             engine.part(i).mix.gainDb = kit.levelDb[static_cast<std::size_t>(i)];
             engine.part(i).velocityTone = kit.velocityTone[static_cast<std::size_t>(i)];
+            engine.part(i).mix.reverbSend = kit.reverbSend[static_cast<std::size_t>(i)];
         }
+    engine.setReverb(kit.reverb);
     if (!skip(4))
         engine.part(4).chokes = kit.subCutsKick ? 1u : 0u;
 }

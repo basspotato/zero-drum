@@ -214,7 +214,7 @@ float Part::duckGain() noexcept
     return static_cast<float>(1.0 - std::clamp(mix.duck, 0.0f, 1.0f) * duckLevel_);
 }
 
-void Part::render(float* left, float* right, int numSamples) noexcept
+void Part::render(float* left, float* right, float* send, int numSamples) noexcept
 {
     if (numSamples <= 0)
         return;
@@ -259,6 +259,12 @@ void Part::render(float* left, float* right, int numSamples) noexcept
         left[n] += mono[n] * panL;
         right[n] += mono[n] * panR;
     }
+    if (mix.reverbSend > 0.0f && send != nullptr)
+    {
+        const float s = gain * std::clamp(mix.reverbSend, 0.0f, 1.0f);
+        for (int n = 0; n < numSamples; ++n)
+            send[n] += mono[n] * s;
+    }
 }
 
 // -------------------------------------------------------------------------------- Engine
@@ -274,6 +280,9 @@ void Engine::prepare(double sampleRate, int maxBlockSize)
     maxBlockSize_ = maxBlockSize;
     for (auto& p : parts_)
         p.prepare(sampleRate, maxBlockSize);
+    send_.assign(static_cast<std::size_t>(std::max(maxBlockSize, 1)), 0.0f);
+    reverb_.prepare(sampleRate);
+    reverb_.set(reverbSettings_);
 }
 
 void Engine::reset() noexcept
@@ -281,6 +290,7 @@ void Engine::reset() noexcept
     for (auto& p : parts_)
         p.reset();
     clipper_.reset();
+    reverb_.reset();
 }
 
 void Engine::setSample(int partIndex, SampleDataPtr sample)
@@ -313,12 +323,12 @@ void Engine::applyPendingPattern() noexcept
     pendingState_.store(Empty, std::memory_order_release);
 }
 
-void Engine::renderParts(float* left, float* right, int from, int to) noexcept
+void Engine::renderParts(float* left, float* right, float* send, int from, int to) noexcept
 {
     if (to <= from)
         return;
     for (auto& p : parts_)
-        p.render(left + from, right + from, to - from);
+        p.render(left + from, right + from, send + from, to - from);
 }
 
 void Engine::process(const Transport& transport, const NoteEvent* external, int numExternal,
@@ -367,11 +377,13 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
         events_[static_cast<std::size_t>(j + 1)] = e;
     }
 
+    float* send = send_.data();
+    std::fill(send, send + numSamples, 0.0f);
     int position = 0;
     for (int i = 0; i < count; ++i)
     {
         const auto& e = events_[static_cast<std::size_t>(i)];
-        renderParts(left, right, position, e.offset);
+        renderParts(left, right, send, position, e.offset);
         position = e.offset;
         // Chokes first, so a part that cuts itself through its own mask still plays.
         const std::uint32_t cuts = parts_[static_cast<std::size_t>(e.part)].chokes;
@@ -385,7 +397,8 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
                 if (p != kDuckSourcePart && parts_[static_cast<std::size_t>(p)].mix.duck > 0.0f)
                     parts_[static_cast<std::size_t>(p)].duckTrigger();
     }
-    renderParts(left, right, position, numSamples);
+    renderParts(left, right, send, position, numSamples);
+    reverb_.process(send, left, right, numSamples);
 
     if (masterGain_ != 1.0f)
         for (int n = 0; n < numSamples; ++n)
