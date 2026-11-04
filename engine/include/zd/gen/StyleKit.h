@@ -33,6 +33,10 @@ struct StyleKit
     float subDuck = 0.0f;
     float percDuck = 0.0f;
     float duckRelease = 0.12f;
+    /// Velocity to tone per part (Part::velocityTone): strongest where ghost notes matter.
+    std::array<float, 5> velocityTone {};
+    /// The 808 cuts the kick's tail when it plays on its own (trap, drill).
+    bool subCutsKick = false;
 };
 
 StyleKit styleKit(Style style) noexcept;

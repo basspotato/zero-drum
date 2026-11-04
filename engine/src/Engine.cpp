@@ -80,22 +80,72 @@ void Part::trigger(float velocity, int note) noexcept
     if (mix.mono)
         forEachVoice([](Voice& v) { v.kill(); });
 
-    triggerEngine(type, velocity, note, glideFromPrevious);
+    // Velocity to tone, from the hit's own velocity (before any layer gain): 0 at full
+    // velocity, `velocityTone` at 0.3, up to 1.4x that for the softest hits.
+    const float toneDrop = std::clamp(velocityTone, 0.0f, 1.0f) * std::clamp((1.0f - velocity) / 0.7f, 0.0f, 1.4f);
+
+    samplesSinceTrigger_ = 0;
+    triggerEngine(type, velocity, toneDrop, note, glideFromPrevious);
     if (layer != EngineType::Off && layer != type)
-        triggerEngine(layer, velocity * dsp::dbToGain(std::clamp(layerGainDb, -48.0f, 6.0f)), note, false);
+        triggerEngine(layer, velocity * dsp::dbToGain(std::clamp(layerGainDb, -48.0f, 6.0f)), toneDrop, note, false);
 }
 
-void Part::triggerEngine(EngineType t, float velocity, int note, bool glideFromPrevious) noexcept
+void Part::choke() noexcept
+{
+    if (samplesSinceTrigger_ > 0)
+        forEachVoice([](Voice& v) { v.kill(); });
+}
+
+void Part::triggerEngine(EngineType t, float velocity, float toneDrop, int note, bool glideFromPrevious) noexcept
 {
     const int i = allocateVoice(t);
     const auto idx = static_cast<std::size_t>(i);
+    const float decayScale = 1.0f - 0.4f * toneDrop;
     switch (t)
     {
-        case EngineType::AnalogKick: kickVoices_[idx].trigger(kick, velocity); break;
-        case EngineType::AnalogSnare: snareVoices_[idx].trigger(snare, velocity); break;
-        case EngineType::Sample: sampleVoices_[idx].trigger(sample.get(), sampleParams, velocity); break;
-        case EngineType::FmPerc: fmVoices_[idx].trigger(fm, velocity); break;
-        case EngineType::Clap: clapVoices_[idx].trigger(clap, velocity); break;
+        case EngineType::AnalogKick:
+        {
+            KickParams k = kick;
+            k.decay *= decayScale;
+            k.click *= 1.0f - 0.6f * std::min(toneDrop, 1.0f);
+            k.pitchAmount *= 1.0f - 0.3f * std::min(toneDrop, 1.0f);
+            kickVoices_[idx].trigger(k, velocity);
+            break;
+        }
+        case EngineType::AnalogSnare:
+        {
+            SnareParams s = snare;
+            s.toneDecay *= decayScale;
+            s.noiseDecay *= decayScale;
+            s.noiseTone = std::max(800.0f, s.noiseTone - 2000.0f * toneDrop);
+            snareVoices_[idx].trigger(s, velocity);
+            break;
+        }
+        case EngineType::Sample:
+        {
+            SampleParams sp = sampleParams;
+            if (sp.decay > 0.0f)
+                sp.decay *= decayScale;
+            sampleVoices_[idx].trigger(sample.get(), sp, velocity);
+            break;
+        }
+        case EngineType::FmPerc:
+        {
+            FmParams f = fm;
+            f.decay *= decayScale;
+            f.index *= 1.0f - 0.4f * std::min(toneDrop, 1.0f);
+            fmVoices_[idx].trigger(f, velocity);
+            break;
+        }
+        case EngineType::Clap:
+        {
+            ClapParams c = clap;
+            c.decay *= decayScale;
+            c.toneHz = std::max(400.0f, c.toneHz * (1.0f - 0.35f * toneDrop));
+            c.snap *= 1.0f - 0.6f * std::min(toneDrop, 1.0f);
+            clapVoices_[idx].trigger(c, velocity);
+            break;
+        }
         case EngineType::Sub808:
         {
             const double target = note >= 0 ? noteToHz(note) : static_cast<double>(sub.tuneHz);
@@ -166,7 +216,10 @@ float Part::duckGain() noexcept
 
 void Part::render(float* left, float* right, int numSamples) noexcept
 {
-    if (numSamples <= 0 || (type == EngineType::Off && !isActive()))
+    if (numSamples <= 0)
+        return;
+    samplesSinceTrigger_ = std::min<std::int64_t>(samplesSinceTrigger_ + numSamples, std::int64_t { 1 } << 40);
+    if (type == EngineType::Off && !isActive())
         return;
 
     // The strip runs even when no voice is sounding, so filter and envelope tails evolve
@@ -320,6 +373,12 @@ void Engine::process(const Transport& transport, const NoteEvent* external, int 
         const auto& e = events_[static_cast<std::size_t>(i)];
         renderParts(left, right, position, e.offset);
         position = e.offset;
+        // Chokes first, so a part that cuts itself through its own mask still plays.
+        const std::uint32_t cuts = parts_[static_cast<std::size_t>(e.part)].chokes;
+        if (cuts != 0)
+            for (int p = 0; p < kMaxParts; ++p)
+                if (p != e.part && ((cuts >> p) & 1u) != 0)
+                    parts_[static_cast<std::size_t>(p)].choke();
         parts_[static_cast<std::size_t>(e.part)].trigger(e.velocity, e.note);
         if (e.part == kDuckSourcePart)
             for (int p = 0; p < kMaxParts; ++p)

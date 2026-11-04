@@ -85,6 +85,12 @@ Export a loop with stems and MIDI: `./build/zd_render out/ 2 0 48000 7 0` (a pat
   rate (**Crush Rate**, 4 to 48 kHz; 48 kHz means no rate reduction), with an anti-alias
   **Crush Filter** before the hold. The boom bap kit puts every drum through the classic 12-bit,
   26.04 kHz sampler; UK garage takes 12 bits on snare and hats. The 808 stays clean.
+- **Velocity to Tone** (per part): softer hits are shorter and darker (snare wires lower, clap
+  body lower, kick click and FM brightness down), so ghost notes sound like ghost notes, not
+  quiet copies. Strongest in the boom bap, DnB, garage and hip-hop kits. The 808 never changes.
+- **Chokes**: **808 Cuts Kick** stops the kick's tail when the 808 plays on its own (on in the
+  trap and drill kits); **Kick Cuts 808** does the reverse. Hits on the same sample never cut
+  each other. The engine supports any part cutting any others (open and closed hats).
 - **Sidechain**: every kick ducks the 808 (**808 Sidechain**) and optionally the perc
   (**Perc Sidechain**), with a 3 ms click-free attack and **Sidechain Release**. Style kits set
   it: a short duck for trap-family styles, a full pump for house, trance and festival.
