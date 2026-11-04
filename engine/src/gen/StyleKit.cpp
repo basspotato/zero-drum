@@ -206,6 +206,17 @@ StyleKit styleKit(Style style) noexcept
         k.strips[3].filterMode = r.percMode;
         k.strips[3].cutoffHz = r.percCutoff;
     }
+    // Sampler grit from the guide: boom bap goes through the classic 12-bit, 26.04 kHz
+    // sampler on every drum; garage takes 12 bits on snare and hats, at the full rate.
+    if (style == Style::BoomBap)
+        for (int i = 0; i < 4; ++i)
+        {
+            k.strips[static_cast<std::size_t>(i)].crushBits = 12.0f;
+            k.strips[static_cast<std::size_t>(i)].crushRateHz = 26040.0f;
+        }
+    if (style == Style::UKGarage)
+        for (int i : { 1, 2 })
+            k.strips[static_cast<std::size_t>(i)].crushBits = 12.0f;
     k.levelDb = { r.lk + r.trimDb, r.ls + r.trimDb, r.lh + r.trimDb, r.lp + r.trimDb, r.lb + r.trimDb };
     k.rootNote = r.root;
     const ClapRow& c = kClaps[static_cast<std::size_t>(index)];

@@ -117,6 +117,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ZeroDrumProcessor::createLay
                                                                juce::AudioParameterFloatAttributes().withLabel("Hz")));
         layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "Resonance", 1 }, n + " Resonance", skewed(0.5f, 12.0f, 1.0f), 0.707f));
         layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "StripDrive", 1 }, n + " Strip Drive", Range { 0.0f, 1.0f }, 0.0f));
+        layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { id + "Crush", 1 }, n + " Crush", false));
+        layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "CrushBits", 1 }, n + " Crush Bits", Range { 4.0f, 16.0f }, 12.0f,
+                                                               juce::AudioParameterFloatAttributes().withLabel("bit")));
+        // 48 kHz means no rate reduction; 26.04 kHz is the classic 12-bit sampler.
+        layout.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID { id + "CrushRate", 1 }, n + " Crush Rate", skewed(4000.0f, 48000.0f, 20000.0f), 26040.0f,
+                                                               juce::AudioParameterFloatAttributes().withLabel("Hz")));
+        layout.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID { id + "CrushFilter", 1 }, n + " Crush Filter", true));
     }
 
     // Beat generator
@@ -222,6 +229,11 @@ void ZeroDrumProcessor::applyParameters(zd::Engine& engine) const noexcept
         st.cutoffHz = stripValue(i, "Cutoff");
         st.resonance = stripValue(i, "Resonance");
         st.drive = stripValue(i, "StripDrive");
+        const bool crush = stripValue(i, "Crush") > 0.5f;
+        const float rate = stripValue(i, "CrushRate");
+        st.crushBits = crush ? stripValue(i, "CrushBits") : 0.0f;
+        st.crushRateHz = crush && rate < 47999.0f ? rate : 0.0f;
+        st.crushFilter = stripValue(i, "CrushFilter") > 0.5f;
     }
 
     engine.sequencer().pattern().swing = value("swing") * 0.01;
@@ -516,6 +528,14 @@ void ZeroDrumProcessor::loadStyleKit(zd::gen::Style style, int rootNote, std::ui
         setParam((id + "Cutoff").c_str(), st.cutoffHz);
         setParam((id + "Resonance").c_str(), st.resonance);
         setParam((id + "StripDrive").c_str(), st.drive);
+        const bool crush = st.crushBits > 0.0f || st.crushRateHz > 0.0f;
+        setParam((id + "Crush").c_str(), crush ? 1.0f : 0.0f);
+        if (crush)
+        {
+            setParam((id + "CrushBits").c_str(), st.crushBits > 0.0f ? st.crushBits : 16.0f);
+            setParam((id + "CrushRate").c_str(), st.crushRateHz > 0.0f ? st.crushRateHz : 48000.0f);
+            setParam((id + "CrushFilter").c_str(), st.crushFilter ? 1.0f : 0.0f);
+        }
     }
 }
 

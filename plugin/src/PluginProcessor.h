@@ -74,9 +74,10 @@ public:
 
     static constexpr int kSubMidiChannel = 2;
     static constexpr int kNumStripParts = 5;
-    static constexpr int kNumStripSuffixes = 6;
+    static constexpr int kNumStripSuffixes = 10;
     static constexpr const char* kStripNames[kNumStripParts] { "Kick", "Snare", "Hat", "Perc", "808" };
-    static constexpr const char* kStripSuffixes[kNumStripSuffixes] { "Attack", "Sustain", "FilterMode", "Cutoff", "Resonance", "StripDrive" };
+    static constexpr const char* kStripSuffixes[kNumStripSuffixes] { "Attack", "Sustain", "FilterMode", "Cutoff", "Resonance", "StripDrive",
+                                                                      "Crush", "CrushBits", "CrushRate", "CrushFilter" };
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
