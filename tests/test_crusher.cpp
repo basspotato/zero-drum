@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include "zd/Engine.h"
 #include "zd/Strip.h"
 #include "zd/dsp/Crusher.h"
 #include "zd/dsp/Math.h"
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 using namespace zd;
@@ -112,4 +114,37 @@ TEST_CASE("Style kits: boom bap drums go through the 12-bit sampler, trap stays 
     const auto trap = gen::styleKit(gen::Style::Trap);
     for (const auto& s : trap.strips)
         CHECK((s.crushBits == 0.0f && s.crushRateHz == 0.0f));
+}
+
+TEST_CASE("Crusher in the engine: a crush-only strip stays bit-identical for any block size")
+{
+    // A strip whose only active stage is the crusher must still run between hits, or the
+    // hold's phase would depend on where blocks happen to end.
+    constexpr double sr = 48000.0;
+    const int total = static_cast<int>(sr * 4.0);
+    auto render = [&](const std::vector<int>& blocks) {
+        auto e = std::make_unique<Engine>();
+        e->prepare(sr, 4096);
+        loadDefaultKit(*e);
+        for (int p = 0; p < 5; ++p)
+        {
+            e->part(p).strip = StripParams {};
+            e->part(p).strip.crushBits = 8.0f;
+            e->part(p).strip.crushRateHz = 11025.0f;
+        }
+        std::vector<float> l(static_cast<std::size_t>(total)), r(static_cast<std::size_t>(total));
+        InternalClock clock(120.0);
+        int pos = 0, b = 0;
+        while (pos < total)
+        {
+            const int n = std::min(blocks[static_cast<std::size_t>(b++) % blocks.size()], total - pos);
+            e->process(clock.next(sr, n), nullptr, 0, l.data() + pos, r.data() + pos, n);
+            pos += n;
+        }
+        return l;
+    };
+    const auto a = render({ 32 });
+    CHECK(test::peak(a) > 0.1);
+    CHECK(a == render({ 2048 }));
+    CHECK(a == render({ 17, 512, 1, 333, 4096 }));
 }
